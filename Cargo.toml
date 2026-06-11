@@ -46,7 +46,7 @@ tracing-subscriber = { version = "=0.3.22", features = ["env-filter", "fmt"] }
 alloy                   = { version = "=2.0.5", features = ["essentials", "signer-local", "provider-http", "rpc-types", "node-bindings"] }
 alloy-primitives        = "=1.6.0"
 alloy-signer            = "=2.0.5"
-alloy-signer-local      = "=2.0.5"
+alloy-signer-local      = { version = "=2.0.5", features = ["mnemonic"] }
 alloy-consensus         = "=2.0.5"
 alloy-rlp               = "=0.3.15"
 alloy-contract          = "=2.0.5"
@@ -57,9 +57,21 @@ clap                    = { version = "=4.6.1", features = ["derive"] }
 rustyline               = "=18.0.0"
 serde                   = { version = "=1.0.228", features = ["derive"] }
 toml                    = "=1.1.2"
+# M1: Keccak-256 (per V8 §5 M1 DoD; sha3 crate forbidden)
+tiny-keccak             = { version = "=2.0.2", features = ["keccak"] }
+# M1: BIP-39 wordlist (transitive via alloy-signer-local; declared
+# explicitly here so we can use `coins_bip39::Mnemonic` directly in
+# src/crypto/mnemonic.rs)
+coins-bip39             = "=0.12.0"
+# M1: thread_rng() for mnemonic generation
+rand                    = "=0.8.5"
+# M1: async runtime for async signer APIs (Signer::sign_message is async)
+tokio                   = { version = "=1.46.1", features = ["rt", "macros"] }
 
 [dev-dependencies]
 assert_cmd = "=2.1.1"  # ADR-0005: tests/it_panic_hook.rs
+# M1: property-based testing for personal_sign variants + EIP-55 checksums
+proptest = "=1.11.0"
 
 [profile.release]
 opt-level = 3
