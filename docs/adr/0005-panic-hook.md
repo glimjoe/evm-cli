@@ -34,11 +34,13 @@ The threat model: a panic while `Secret<Vec<u8>>` is in scope on the stack could
 
 ### M0 implementation
 
-1. Add `human-panic = "2"` to `[dependencies]` in `Cargo.toml` (latest 2.x; pin exact per ADR-0001 upgrade policy).
+1. Add `human-panic = "2"` to `[dependencies]` in `Cargo.toml` (latest 2.x; pin exact per ADR-0001 upgrade policy). Current pinned version: `=2.0.8`.
 2. In `src/main.rs`, **first line of `main()`** (before any `Secret` allocation, before any `tracing` init):
    ```rust
    fn main() {
-       human_panic::setup!();
+       // Corrected 2026-06-11: human-panic 2.x exports `setup_panic!()`,
+       // not `setup!()`. The original ADR draft used the wrong macro name.
+       human_panic::setup_panic!();
        // ... rest of main
    }
    ```

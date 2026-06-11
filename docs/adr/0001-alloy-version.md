@@ -32,7 +32,7 @@ We must commit to a specific version and MSRV, documented with evidence.
 
 ## Decision Outcome
 
-**Chosen option: A** — `alloy = "=2.0.5"`, MSRV **1.91**.
+**Chosen option: A** — `alloy = "=2.0.5"`, MSRV **1.96** (rev2 2026-06-11: raised from 1.91 to match `rust-toolchain.toml`; see Revisions §).
 
 ### Verification log (2026-06-11)
 
@@ -65,7 +65,7 @@ Local `cargo --version` is 1.96.0 (2026-05-25), which satisfies MSRV 1.91.
 * **Good**: truly latest stable; full bug-fix surface of 2.0.x line; CVE backports active.
 * **Good**: API surface for M1–M3 verified present (Signer, LocalSigner, anvil, sol!, rlp::Decodable all exist in 2.0.5).
 * **Good**: ecosystem migration to 2.0 is recent (2026-04-13), so tutorial/example coverage is building up but not yet saturated — the V1 project is on a forward-looking line.
-* **Bad**: MSRV rises from V2's 1.78 → 1.91. This affects any consumer of evm-cli as a library (not relevant for V1 since `no published lib`).
+* **Bad**: MSRV rises from V2's 1.78 → 1.96. This affects any consumer of evm-cli as a library (not relevant for V1 since `no published lib`).
 * **Bad**: 2.0.5 is a young release (~3 weeks old as of 2026-06-11). Minor edge-case bugs may still surface. Mitigation: pinned exact, Upgrade Policy (ADR-0004) provides a path to migrate.
 * **Bad**: this ADR is the first re-baseline. Future minor bumps (2.0.x → 2.0.x' or 2.0.x → 2.1.0) require a new ADR + PR review per §1.1.
 
@@ -87,7 +87,7 @@ Local `cargo --version` is 1.96.0 (2026-05-25), which satisfies MSRV 1.91.
 - `rust-toolchain.toml`:
   ```toml
   [toolchain]
-  channel = "1.91"
+  channel = "1.96.0"  # rev2 2026-06-11: raised from 1.91 to match MSRV 1.96
   ```
 - CI matrix: `cargo build` + `cargo test` on x86_64 and aarch64 Linux
 - Re-verify `cargo metadata --format-version=1` lists MSRV = 1.91 in the lockfile
@@ -107,6 +107,22 @@ The following V4 sections reference stale assumptions and must be updated to ref
 | §13 V3→V4 Changelog | (no entry — V4 preceded this verification) | Add "ADR-0001 re-evaluated 2026-06-11: 2.0.5 + MSRV 1.91" |
 
 This sync can be batched with the ADR-0005 acceptance (G2) into a single V4 → V5 update.
+
+## Revisions
+
+### 2026-06-11 (revision 1) — MSRV raised 1.91 → 1.96
+
+Originally `ADR-0001` declared MSRV `1.91` (matching alloy 2.0.5's actual MSRV). The plan was using rust-toolchain `1.96.0` from M0 kickoff onward (because the network in the dev environment could not download 1.91). This created an inconsistency: declared MSRV was 1.91 but build toolchain was 1.96.0.
+
+**Resolution:** raise declared MSRV to `1.96`, matching the toolchain. Rationale:
+
+- **No dep is broken.** Every V1 dependency's MSRV is ≤ 1.91 (alloy 2.0.5 is the highest, at 1.91). All other deps are older (lower MSRV). 1.96 is therefore a no-op for dep compatibility.
+- **No code is broken.** M0 commit was already building on 1.96 successfully. The change merely makes the declaration match reality.
+- **Future contributors** see a consistent story: "this crate requires rustc 1.96 or later".
+
+**Net:** documentation fix, not a real change. The M0 commit (`414556f`) is unaffected.
+
+This revision aligns the ADR text with `Cargo.toml` (`rust-version = "1.96"` per V9 §18) and `rust-toolchain.toml` (`channel = "1.96.0"`).
 
 ## References
 

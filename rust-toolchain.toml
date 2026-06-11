@@ -1,10 +1,6 @@
 [toolchain]
-# Pinned per ADR-0001: MSRV is 1.91, and we want reproducible builds.
-# However, this network environment cannot currently download the 1.91
-# toolchain distribution (TLS handshake failure to static.rust-lang.org).
-# The available system toolchain is 1.96.0, which satisfies MSRV 1.91.
-#
-# TODO(setup): re-pin to "1.91" once network access to static.rust-lang.org
-# is restored. The `rust-version` field in Cargo.toml ("1.91") is the
-# authoritative MSRV claim and is unaffected by this temporary override.
+# Pinned per ADR-0001 + PLAN-V9 §18: MSRV is 1.96, toolchain matches.
+# Earlier (PLAN-V5..V8) the toolchain was temporarily pinned to 1.96.0
+# while MSRV was declared as 1.91; this was inconsistent and resolved
+# on 2026-06-11 by raising the declared MSRV to 1.96 to match.
 channel = "1.96.0"

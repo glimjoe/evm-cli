@@ -86,18 +86,18 @@ impl<T: Zeroize> fmt::Debug for Secret<T> {
 //   - Display : same rationale as Serialize.
 
 /// Best-effort mlock of a byte slice. Logs WARN on failure.
+///
+/// Uses `os_memlock::mlock` (the thinnest `mlock(2)` wrapper on
+/// crates.io; see ADR-0007 rev2). The wrapper returns `io::Result<()>`
+/// with `ErrorKind::Unsupported` on platforms where the syscall is
+/// unavailable, which we treat as WARN-not-fatal.
 fn mlock_bytes(bytes: &[u8]) -> Result<(), String> {
-    // SAFETY: `bytes` is a valid slice; mlock with a NULL ptr + 0 len is a no-op
-    // (used here to validate the syscall works at all on this kernel).
-    // We then mlock the real region.
-    let ptr = bytes.as_ptr().cast::<libc::c_void>();
+    let ptr = bytes.as_ptr().cast::<std::ffi::c_void>();
     let len = bytes.len();
-    // SAFETY: caller guarantees `ptr..ptr+len` is a valid allocation.
-    let rc = unsafe { libc::mlock(ptr, len) };
-    if rc != 0 {
-        return Err(std::io::Error::last_os_error().to_string());
-    }
-    Ok(())
+    // SAFETY: caller guarantees `ptr..ptr+len` is a valid allocation
+    // owned by this process for the duration of the call.
+    let result = unsafe { os_memlock::mlock(ptr, len) };
+    result.map_err(|e| e.to_string())
 }
 
 #[cfg(test)]

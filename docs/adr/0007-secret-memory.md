@@ -32,23 +32,39 @@ P0-2 mandates comprehensive hardening.
 ### 1. Type system
 
 ```rust
-// Lives in src/types/secret.rs (per ADR-0003 rev1: Secret<T> is a primitive)
-use zeroize::{Zeroize, ZeroizeOnDrop};
+// Lives in src/types/secret.rs (per ADR-0003 rev1: Secret<T> is a primitive).
+//
+// CORRECTED 2026-06-11: the original ADR draft used `T: ZeroizeOnDrop` as
+// the bound. This is **incorrect** because `Vec<u8>` (and most primitive
+// containers) does NOT implement `ZeroizeOnDrop` — only `Zeroizing<T>`
+// and a few other types do. The bound was changed to `T: Zeroize` and
+// an explicit `Drop` impl was added that calls `T::zeroize()`. Drop
+// behavior is equivalent: zeroization fires on normal drop AND on
+// panic unwind (Rust runs `Drop` impls during unwind). The new code
+// is therefore more permissive (any `T: Zeroize` works) and equally
+// safe.
+use zeroize::Zeroize;
 
-pub struct Secret<T: ZeroizeOnDrop>(T);
-
-impl<T: ZeroizeOnDrop> Secret<T> {
-    pub fn new(value: T) -> Self { Self(value) }
-    /// Explicit access for serialization / signing. Caller is responsible
-    /// for not cloning or logging the returned reference.
-    pub fn expose_secret(&self) -> &T { &self.0 }
+pub struct Secret<T: Zeroize> {
+    inner: T,
 }
 
-// Drop is auto-generated: drops T, which is ZeroizeOnDrop, which zeroizes.
-static_assertions::assert_impl_all!(Secret<Vec<u8>>: ZeroizeOnDrop);
+// Explicit Drop — runs on normal drop AND on panic unwind.
+impl<T: Zeroize> Drop for Secret<T> {
+    fn drop(&mut self) {
+        self.inner.zeroize();
+    }
+}
+
+impl<T: Zeroize + 'static> Secret<T> {
+    pub fn new(value: T) -> Self { Self { inner: value } }
+    /// Explicit access for serialization / signing. Caller is responsible
+    /// for not cloning or logging the returned reference.
+    pub fn expose_secret(&self) -> &T { &self.inner }
+}
 
 // Debug redacts content; never prints inner.
-impl<T: ZeroizeOnDrop> std::fmt::Debug for Secret<T> {
+impl<T: Zeroize> std::fmt::Debug for Secret<T> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "Secret(***)")
     }
@@ -64,6 +80,12 @@ impl<T: ZeroizeOnDrop> std::fmt::Debug for Secret<T> {
 //
 // Secret does NOT implement Display. Printing must go through Debug.
 ```
+
+The `+ 'static` bound on `Secret::new` is required so the mlock
+helper can `Any::downcast_ref` the value to `Vec<u8>`. All concrete
+secret-bearing types (`Vec<u8>`, `[u8; N]`, `Zeroizing<Vec<u8>>`,
+`B256` from alloy) are `'static`, so this bound does not restrict
+real callers.
 
 Mnemonic, seed, and private key material **MUST** be wrapped in `Secret<Vec<u8>>` or `Zeroizing<...>`. They **MUST NOT** be stored as `String` (a `String` is just a `Vec<u8>` with UTF-8 invariant, and its heap buffer is not zeroized on drop).
 
@@ -92,7 +114,9 @@ fn harden_process() -> Result<(), ProcessError> {
 
 **Threshold:** any secret-bearing buffer of **≥ 32 bytes** (private key size) is mlocked at allocation time. Smaller buffers (e.g. a 20-byte address, a 4-byte chain id) are not mlocked — the overhead is not worth it for material that is not by itself a credential.
 
-**Implementation:** `Secret<Vec<u8>>::new(value)` calls `mlock::mlock_bytes(&value)` immediately after the `Vec` is built. Failure is logged at `WARN` and the `Secret` is still returned; the mlock is best-effort, not mandatory. Documented in troubleshooting for sandboxed environments where mlock may be denied.
+**Implementation:** `Secret<Vec<u8>>::new(value)` calls `os_memlock::mlock(ptr, len)` immediately after the `Vec` is built. Failure is logged at `WARN` and the `Secret` is still returned; the mlock is best-effort, not mandatory. Documented in troubleshooting for sandboxed environments where mlock may be denied.
+
+Note: ADR-0007 originally referenced "`mlock` crate", but no crate named exactly `mlock` exists on crates.io. `os-memlock` (0.2.0) is the thinnest `mlock(2)` wrapper available and was selected at M0 implementation time.
 
 **When mlock is invoked:**
 - Creating a `Secret<Vec<u8>>` from a parsed mnemonic
@@ -178,6 +202,15 @@ G3 review by maintainer identified 4 issues in the initial Accepted draft. All a
 
 No change to the core "ZeroizeOnDrop + mlock + RLIMIT_CORE=0 + String ban" decision. All revisions are concrete specifications of how to implement it.
 
+### 2026-06-11 (revision 2) — M0 implementation findings
+
+G3 was followed by M0 implementation, which revealed two further corrections to the ADR text (not the underlying design intent):
+
+1. **`T: ZeroizeOnDrop` bound is wrong**: the original code block used `pub struct Secret<T: ZeroizeOnDrop>(T);`. This is **not compilable** for `Vec<u8>` and most primitive containers because those types impl `Zeroize` (not `ZeroizeOnDrop`). The `zeroize` crate provides `ZeroizeOnDrop` for `Zeroizing<T>` and for tuples of `ZeroizeOnDrop` types, but not for raw `Vec<T>`. The bound was changed to `T: Zeroize` and an explicit `impl Drop for Secret<T>` that calls `self.inner.zeroize()` was added. The new design is **more permissive** (any `T: Zeroize` works) and **equivalently safe** (the explicit `Drop` runs on normal drop AND on panic unwind, just like `ZeroizeOnDrop`). The static assertion `assert_impl_all!(Secret<Vec<u8>>: ZeroizeOnDrop)` was removed since the new bound is `Zeroize`, not `ZeroizeOnDrop`. All M1+ code that calls `Secret::new(mnemonic_bytes)` works unchanged.
+2. **"The `mlock` crate" was a phantom name**: ADR text referenced `mlock::mlock_bytes`. No crate named exactly `mlock` exists on crates.io. `os-memlock` (0.2.0) is the thinnest `mlock(2)` wrapper and was used at M0 implementation. The ADR now specifies `os_memlock::mlock(ptr, len)` as the actual syscall wrapper. The underlying policy (≥32B threshold, WARN on failure, no-op for short buffers) is unchanged.
+
+Both corrections are **specification updates**, not design changes. The M0 commit (`414556f`) implements the corrected design; the ADR text now matches the implementation.
+
 ## References
 
 - PLAN-V4 §3
@@ -186,7 +219,7 @@ No change to the core "ZeroizeOnDrop + mlock + RLIMIT_CORE=0 + String ban" decis
 - PLAN-V4 §8
 - ADR-0003 (workspace: `Secret<T>` lives in `types/`)
 - `zeroize` crate: https://crates.io/crates/zeroize
-- `mlock` crate: https://crates.io/crates/mlock
+- `os-memlock` crate: https://crates.io/crates/os-memlock (corrected from "mlock" — see Revisions §)
 - `static_assertions` crate: https://crates.io/crates/static_assertions
 - clippy `disallowed_types` / `disallowed_methods`: https://rust-lang.github.io/rust-clippy/master/index.html#disallowed_types
 - OWASP Password Storage Cheat Sheet (Argon2id reference)
