@@ -44,13 +44,19 @@ tracing-subscriber = { version = "=0.3.22", features = ["env-filter", "fmt"] }
 # consistent with V8 step 4.
 # ────────────────────────────────────────────────────────────────────
 alloy                   = { version = "=2.0.5", features = ["essentials", "signer-local", "provider-http", "rpc-types", "node-bindings"] }
-alloy-primitives        = "=1.6.0"
-alloy-signer            = "=2.0.5"
-alloy-signer-local      = { version = "=2.0.5", features = ["mnemonic", "keystore"] }
+alloy-provider          = "=2.0.5"
+alloy-transport-http     = "=2.0.5"
+alloy-network           = "=2.0.5"
+alloy-eips               = "=2.0.5"
 alloy-consensus         = "=2.0.5"
 alloy-rlp               = "=0.3.15"
 alloy-contract          = "=2.0.5"
 alloy-sol-types         = "=1.6.0"
+alloy-primitives        = "=1.6.0"
+alloy-signer            = "=2.0.5"
+alloy-signer-local      = { version = "=2.0.5", features = ["mnemonic", "keystore"] }
+# HTTP client used by alloy's transport layer.
+reqwest                 = { version = "=0.12.24", default-features = false, features = ["rustls-tls", "json"] }
 nix                     = { version = "=0.31.3", features = ["fs"] }
 directories             = "=6.0.0"
 clap                    = { version = "=4.6.1", features = ["derive"] }
@@ -66,7 +72,7 @@ coins-bip39             = "=0.12.0"
 # M1: thread_rng() for mnemonic generation
 rand                    = "=0.8.5"
 # M1: async runtime for async signer APIs (Signer::sign_message is async)
-tokio                   = { version = "=1.46.1", features = ["rt", "macros"] }
+tokio                   = { version = "=1.46.1", features = ["rt", "macros", "time"] }
 # M2: standard Ethereum keystore format (deviation from V8 §5 M2 spec
 # which specified Argon2id + AES-256-GCM; rationale: user chose
 # interoperability with geth/ethers.js etc. — see V10 §19 changelog)
@@ -76,6 +82,12 @@ serde_json              = "=1.0.150"
 # M2: atomic write staging (ADR-0007 rev1: ZeroizingTempFile; the standard
 # tempfile crate provides RAII cleanup; our wrapper zeroizes on drop)
 tempfile                = "=3.27.0"
+# M3: rate limiter (governor) for the RPC client. Default quota is
+# per-second, configurable; the V8 §5 M3 spec asks for 25 req/s
+# (Infura free tier ceiling).
+governor                = "=0.10.4"
+# M3: URL parser for the RPC endpoint.
+url                     = "=2.5.0"
 
 [dev-dependencies]
 assert_cmd = "=2.1.1"  # ADR-0005: tests/it_panic_hook.rs

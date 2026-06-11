@@ -19,7 +19,7 @@ use crate::error::chain::ChainError;
 use crate::error::config::ConfigError;
 use crate::error::crypto::CryptoError;
 use crate::error::io::IoError;
-use crate::error::keystore::KeystoreError;
+use crate::keystore::KeystoreError;
 
 /// Top-level error type. Wraps `anyhow::Error` and provides a stable
 /// error code via linear downcast (ADR-0006 rev1, "Surface area").
@@ -158,20 +158,11 @@ pub mod crypto {
     }
 }
 
-pub mod keystore {
-    use super::{CodeSource, Error};
-
-    #[derive(Debug, Error)]
-    pub enum KeystoreError {
-        // M0 placeholder. M2 adds EVMK-001..008.
-    }
-
-    impl CodeSource for KeystoreError {
-        fn code(&self) -> &'static str {
-            match *self {}
-        }
-    }
-}
+// `KeystoreError` lives in `crate::keystore` (the real M2 enum).
+// Per ADR-0006 rev1 + M2 review, the placeholder that previously lived
+// here was removed to avoid the "two `KeystoreError` types" type
+// collision that broke the downcast chain. `CodeSource` is now
+// implemented in `src/keystore/mod.rs` next to the enum itself.
 
 pub mod chain {
     use std::path::PathBuf;
@@ -268,9 +259,11 @@ mod tests {
 
     #[test]
     fn empty_enums_compile_and_yield_catch_all() {
-        // M0: empty KeystoreError / CryptoError / ConfigError / IoError
-        // cannot be constructed (no variants). This test simply asserts
-        // the catch-all is wired.
+        // M0 residue: CryptoError / ConfigError still have no variants
+        // and cannot be constructed. KeystoreError moved to
+        // `crate::keystore` (the real M2 enum) and is no longer empty.
+        // This test simply asserts the catch-all is wired for plain
+        // `anyhow::Error`s that escape the downcast chain.
         let anyhow_err = anyhow::anyhow!("plain string error");
         let cli = CliError::from(anyhow_err);
         assert_eq!(cli.code(), "EVM-999");
@@ -283,5 +276,59 @@ mod tests {
         });
         let s = format!("{err}");
         assert!(s.contains("EVMC-001"), "display missing code: {s}");
+    }
+
+    /// P0-1 regression (M2 review): the downcast chain must find
+    /// `crate::keystore::KeystoreError` (the real enum), not the
+    /// removed placeholder, and every variant must produce its
+    /// ASSIGNED EVMK-NNN code. This is the consumer-facing contract
+    /// for `--json` output (M4).
+    #[test]
+    fn downcast_yields_keystore_codes() {
+        let cases: Vec<(crate::keystore::KeystoreError, &'static str)> = vec![
+            (crate::keystore::KeystoreError::InvalidPassword, "EVMK-001"),
+            (crate::keystore::KeystoreError::FileCorrupted, "EVMK-002"),
+            (
+                crate::keystore::KeystoreError::AliasNotFound("ghost".to_string()),
+                "EVMK-009",
+            ),
+            (
+                crate::keystore::KeystoreError::AliasExists("dup".to_string()),
+                "EVMK-010",
+            ),
+            (
+                crate::keystore::KeystoreError::Io("perm denied".to_string()),
+                "EVMK-011",
+            ),
+            (
+                crate::keystore::KeystoreError::Internal("mac mismatch".to_string()),
+                "EVMK-012",
+            ),
+        ];
+        for (err, expected) in cases {
+            let cli = CliError::from_layer(err);
+            assert_eq!(cli.code(), expected, "downcast mismatch for {expected}");
+        }
+    }
+
+    /// CI enforcement per ADR-0006 rev1: every `code()` match arm
+    /// across all layer enums must return a string that appears in
+    /// `docs/code_allocation.md`. This guards against code drift
+    /// when adding/removing variants.
+    #[test]
+    fn all_codes_are_documented_in_code_allocation() {
+        let alloc = include_str!("../docs/code_allocation.md");
+        let claimed: &[&str] = &[
+            // ChainError
+            "EVMC-001", // KeystoreError (real, in crate::keystore)
+            "EVMK-001", "EVMK-002", "EVMK-009", "EVMK-010", "EVMK-011", "EVMK-012",
+        ];
+        for code in claimed {
+            assert!(
+                alloc.contains(code),
+                "code `{code}` returned by a `code()` match arm is missing from \
+                 `docs/code_allocation.md`; add it there in the same change"
+            );
+        }
     }
 }

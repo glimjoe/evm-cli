@@ -30,9 +30,10 @@
 //   is literally named after the alias. This makes `rename` a
 //   filesystem rename — clean and simple.
 
-#![allow(clippy::disallowed_methods)]
-// We use String::from(...) in tests for fixed bytes; no secret material
-// passes through String in production paths.
+#![cfg_attr(test, allow(clippy::disallowed_methods))]
+// Test-only allow: tests legitimately use `.expect()` / `.unwrap()` on
+// fixed inputs (`tempdir()`, `Secret::new("...")`-style fakes). Production
+// paths must not trip `clippy::disallowed_methods` (P0-4).
 
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -41,6 +42,7 @@ use alloy_primitives::Address;
 use alloy_signer_local::{coins_bip39::English, MnemonicBuilder, PrivateKeySigner};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use zeroize::Zeroizing;
 
 use crate::crypto::mnemonic::{self, MnemonicError, WordCount};
 use crate::types::secret::Secret;
@@ -98,6 +100,22 @@ impl From<serde_json::Error> for KeystoreError {
 impl From<MnemonicError> for KeystoreError {
     fn from(e: MnemonicError) -> Self {
         Self::Internal(e.to_string())
+    }
+}
+
+/// Stable error code mapping per ADR-0006 rev1 + ADR-0009 (forthcoming).
+/// Codes are listed in `docs/code_allocation.md` and CI-enforced by the
+/// `all_codes_are_documented_in_code_allocation` test in `src/error.rs`.
+impl crate::error::CodeSource for KeystoreError {
+    fn code(&self) -> &'static str {
+        match self {
+            Self::InvalidPassword => "EVMK-001",
+            Self::FileCorrupted => "EVMK-002",
+            Self::AliasNotFound(_) => "EVMK-009",
+            Self::AliasExists(_) => "EVMK-010",
+            Self::Io(_) => "EVMK-011",
+            Self::Internal(_) => "EVMK-012",
+        }
     }
 }
 
@@ -174,11 +192,17 @@ impl KeystoreStore {
         }
         // 1. Generate mnemonic.
         let phrase = mnemonic::generate(word_count)?;
-        // 2. Build signer at index 0.
+        // 2. Build signer at index 0. Wrap the cloned phrase in
+        //    `Zeroizing<String>` so our local copy is wiped on drop
+        //    (the alloy `MnemonicBuilder` retains an internal
+        //    `Option<String>` we cannot reach; see ADR-0009 §"Known
+        //    residual risk").
+        let z_phrase: Zeroizing<String> = Zeroizing::new(phrase.expose_secret().clone());
         let signer = MnemonicBuilder::<English>::default()
-            .phrase(phrase.expose_secret().clone())
+            .phrase(&*z_phrase)
             .derivation_path("m/44'/60'/0'/0/0")?
             .build()?;
+        drop(z_phrase);
         // 3. Encrypt + save via alloy (file = alias, no extension).
         self.persist(&signer, alias, password)?;
         Ok(signer)
@@ -195,10 +219,14 @@ impl KeystoreStore {
             return Err(KeystoreError::AliasExists(alias.to_string()));
         }
         let _validated = mnemonic::validate(phrase)?;
+        // Same mitigation as `create`: wrap the caller-supplied phrase
+        // in `Zeroizing<String>` so our local copy is wiped on drop.
+        let z_phrase: Zeroizing<String> = Zeroizing::new(phrase.to_string());
         let signer = MnemonicBuilder::<English>::default()
-            .phrase(phrase.to_string())
+            .phrase(&*z_phrase)
             .derivation_path("m/44'/60'/0'/0/0")?
             .build()?;
+        drop(z_phrase);
         self.persist(&signer, alias, password)?;
         Ok(signer)
     }
@@ -528,5 +556,66 @@ mod tests {
         // The file is named exactly "main" (no ".json").
         assert!(dir.path().join("main").exists());
         assert!(!dir.path().join("main.json").exists());
+    }
+
+    /// P0-1: every `KeystoreError` variant must return a stable EVMK-NNN
+    /// code via `CodeSource::code()`. This test pins the mapping per
+    /// `docs/code_allocation.md` and is the regression guard for the
+    /// M2 review's "two `KeystoreError` types" P0 finding.
+    #[test]
+    fn code_mapping_matches_code_allocation() {
+        use crate::error::CodeSource;
+
+        assert_eq!(KeystoreError::InvalidPassword.code(), "EVMK-001");
+        assert_eq!(KeystoreError::FileCorrupted.code(), "EVMK-002");
+        assert_eq!(
+            KeystoreError::AliasNotFound("ghost".to_string()).code(),
+            "EVMK-009"
+        );
+        assert_eq!(
+            KeystoreError::AliasExists("dup".to_string()).code(),
+            "EVMK-010"
+        );
+        assert_eq!(
+            KeystoreError::Io("perm denied".to_string()).code(),
+            "EVMK-011"
+        );
+        assert_eq!(
+            KeystoreError::Internal("mac mismatch".to_string()).code(),
+            "EVMK-012"
+        );
+    }
+
+    /// `rename(old, old)` is a no-op: the alias is unchanged, the file
+    /// is not touched, and `Ok(())` is returned. Covers the early-return
+    /// branch at `rename()` (was untested per M2 review §B / §G).
+    #[test]
+    fn rename_to_same_alias_is_noop() {
+        let (dir, store) = temp_store();
+        let signer1 = store
+            .create("main", &pw(), WordCount::Twelve)
+            .expect("create");
+        let addr1 = signer1.address();
+        let mtime_before = std::fs::metadata(dir.path().join("main"))
+            .expect("metadata")
+            .modified()
+            .expect("mtime");
+
+        // Sleep 10ms to ensure mtime would change on a rewrite.
+        std::thread::sleep(std::time::Duration::from_millis(10));
+
+        store.rename("main", "main").expect("rename to same");
+
+        let mtime_after = std::fs::metadata(dir.path().join("main"))
+            .expect("metadata after")
+            .modified()
+            .expect("mtime");
+        assert_eq!(
+            mtime_before, mtime_after,
+            "rename to same alias must not touch the file"
+        );
+        // Key is still loadable and address unchanged.
+        let signer2 = store.load("main", &pw()).expect("load");
+        assert_eq!(signer2.address(), addr1);
     }
 }

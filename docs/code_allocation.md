@@ -27,16 +27,29 @@ its `code()` arm returns the new code; the old string is preserved as a
 
 ## EVMK-NNN — KeystoreError
 
+> Realigned 2026-06-11 per M2 review: the M0 placeholder code list
+> (EVMK-001..008) was a speculative design that did not match the
+> implemented enum in `src/keystore/mod.rs`. EVMK-001 and EVMK-002
+> are kept (signatures adjusted to match actual variants). EVMK-003..008
+> are demoted to RESERVED (the speculative variants Argon2Failed,
+> EncryptionFailed, etc. are out of scope for M2 — we use
+> `eth-keystore`'s built-in crypto, see ADR-0009). EVMK-009..012
+> are the new codes that cover the real M2 variants.
+
 | Code | Status | Variant | Notes |
 |---|---|---|---|
 | EVMK-001 | ASSIGNED | `InvalidPassword` | Anti-side-channel: covers wrong password **and** file missing in unlock path |
-| EVMK-002 | ASSIGNED | `FileCorrupted { path: PathBuf }` | JSON parse fail / non-keystore content |
-| EVMK-003 | ASSIGNED | `UnsupportedVersion { found: u32 }` | Keystore format version mismatch |
-| EVMK-004 | ASSIGNED | `Argon2Failed` | KDF computation failed |
-| EVMK-005 | ASSIGNED | `EncryptionFailed` | AES-GCM seal failed |
-| EVMK-006 | ASSIGNED | `DecryptionFailed` | AES-GCM open failed (distinct from EVMK-001 because this is a binary-level error, not a user-input error) |
-| EVMK-007 | ASSIGNED | `FileMissing { path: PathBuf }` | Only surfaced in `create-wallet` path (per V2 §5 L111 anti-side-channel rule) |
-| EVMK-008 | ASSIGNED | `PermissionDenied { path: PathBuf }` | File mode 0600 not satisfied or umask issue |
+| EVMK-002 | ASSIGNED | `FileCorrupted` | JSON parse fail / non-keystore content (no `path` field; the path is captured in the surrounding log context) |
+| EVMK-003 | RESERVED | (former `UnsupportedVersion`) | Keystore format version mismatch — unused in M2; reserved for V2 if we drop `eth-keystore` |
+| EVMK-004 | RESERVED | (former `Argon2Failed`) | KDF computation failed — unused; `eth-keystore` is scrypt-based (ADR-0009) |
+| EVMK-005 | RESERVED | (former `EncryptionFailed`) | AES-GCM seal failed — unused; encryption is `eth-keystore` internal |
+| EVMK-006 | RESERVED | (former `DecryptionFailed`) | AES-GCM open failed — collapsed into `InvalidPassword` (EVMK-001) per anti-side-channel |
+| EVMK-007 | RESERVED | (former `FileMissing { path }`) | Collapsed into `InvalidPassword` (EVMK-001) per anti-side-channel |
+| EVMK-008 | RESERVED | (former `PermissionDenied { path }`) | Surfaced as `Io(String)` (EVMK-011) instead, with the path in the string |
+| EVMK-009 | ASSIGNED | `AliasNotFound(String)` | Alias does not exist (used by `delete` / `load_strict` / `rename`) |
+| EVMK-010 | ASSIGNED | `AliasExists(String)` | Alias collision on `create` / `rename` |
+| EVMK-011 | ASSIGNED | `Io(String)` | I/O error other than file-missing (permission, disk full, …) |
+| EVMK-012 | ASSIGNED | `Internal(String)` | Other internal error (alloy / eth-keystore / BIP-39 / KDF). Includes `LocalSignerError::MacMismatch` from `load_strict` on wrong password |
 | EVMK-099 | RESERVED | (future) | |
 
 ## EVMC-NNN — ChainError

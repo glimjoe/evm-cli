@@ -8,6 +8,7 @@
 
 #![allow(unused_crate_dependencies)] // M1+ deps declared in Cargo.toml per V8 §11 step 4
 
+pub mod chain;
 pub mod crypto;
 pub mod error;
 pub mod keystore;
