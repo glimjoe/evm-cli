@@ -1,0 +1,27 @@
+# clippy.toml — enforced by V8 §5 M0 DoD (P0-4) and ADR-0007 rev1
+#
+# Goal: ban Rust patterns that bypass our error-handling discipline
+# (which is required to ensure secrets never propagate to unwrap-induced
+# panics). Also ban some String/str conversions that would leak secret
+# material into a String buffer.
+
+disallowed-methods = [
+    { path = "std::option::Option::unwrap", reason = "Use expect with context or ? operator" },
+    { path = "std::result::Result::unwrap", reason = "Use ? or expect with context" },
+    { path = "std::option::Option::expect", reason = "Only allowed in #[cfg(test)]" },
+    { path = "std::result::Result::expect", reason = "Only allowed in #[cfg(test)]" },
+    { path = "std::string::String::from_utf8", reason = "Leaks bytes into a String — ADR-0007" },
+    { path = "std::string::String::from_utf8_lossy", reason = "Leaks bytes into a String — ADR-0007" },
+]
+
+# disallowed-types: ban String and Box<str> in functions / structs whose
+# name contains mnemonic/seed/private_key. This is a name-based heuristic
+# and is enforced best-effort; primary defense is code review.
+
+# Note: as of clippy 1.91, `disallowed_types` only matches by full path,
+# not by name pattern. The String ban is therefore enforced via a
+# separate CI grep step (see .github/workflows/ci.yml) — 5 patterns per
+# ADR-0007 rev1. This clippy.toml covers the strict subset that the
+# type-based lint can express.
+
+cognitive-complexity-threshold = 30

@@ -1,0 +1,22 @@
+# Build artifacts
+/target/
+
+# Cargo.lock is COMMITTED (per ADR-0004 / V8 §1 — reproducible builds)
+# Do NOT add Cargo.lock to .gitignore.
+
+# IDE / editor
+.idea/
+.vscode/
+*.iml
+*.swp
+.DS_Store
+
+# Local overrides
+.env
+.env.local
+
+# Coverage output
+/coverage/
+*.profraw
+*.profdata
+lcov.info

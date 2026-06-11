@@ -1,0 +1,73 @@
+[package]
+name = "evm-cli"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.91"
+description = "Linux-only CLI wallet for Sepolia testnet"
+license = "MIT"
+repository = "https://github.com/<org>/evm-cli"
+readme = "README.md"
+publish = false  # V1 has no published lib
+
+[lib]
+name = "evm_cli"
+path = "src/lib.rs"
+
+[[bin]]
+name = "evm-cli"
+path = "src/main.rs"
+
+# ────────────────────────────────────────────────────────────────────
+# M0 dependencies (used in scaffolding)
+# ────────────────────────────────────────────────────────────────────
+[dependencies]
+# Process hardening (ADR-0005, ADR-0007)
+human-panic = "=2.0.8"
+libc = "=0.2.186"  # kept compatible with nix 0.31.3
+
+# Secret memory (ADR-0007)
+zeroize = { version = "=1.8.2", features = ["zeroize_derive"] }
+os-memlock = "=0.2.0"  # mlock(2) wrapper; ADR-0007's ≥32B threshold
+static_assertions = "=1.1.0"
+
+# Error system (ADR-0006)
+anyhow = "=1.0.102"
+thiserror = "=2.0.18"
+
+# Observability (V8 §11 step 4)
+tracing = "=0.1.44"
+tracing-subscriber = { version = "=0.3.22", features = ["env-filter", "fmt"] }
+
+# ────────────────────────────────────────────────────────────────────
+# M1+ dependencies (declared early per V8 §11; will be used in
+# Crypto/Chain/CLI phases). Allowed unused at M0 to keep the spec
+# consistent with V8 step 4.
+# ────────────────────────────────────────────────────────────────────
+alloy                   = { version = "=2.0.5", features = ["essentials", "signer-local", "provider-http", "rpc-types", "node-bindings"] }
+alloy-primitives        = "=1.6.0"
+alloy-signer            = "=2.0.5"
+alloy-signer-local      = "=2.0.5"
+alloy-consensus         = "=2.0.5"
+alloy-rlp               = "=0.3.15"
+alloy-contract          = "=2.0.5"
+alloy-sol-types         = "=1.6.0"
+nix                     = { version = "=0.31.3", features = ["fs"] }
+directories             = "=6.0.0"
+clap                    = { version = "=4.6.1", features = ["derive"] }
+rustyline               = "=18.0.0"
+serde                   = { version = "=1.0.228", features = ["derive"] }
+toml                    = "=1.1.2"
+
+[dev-dependencies]
+assert_cmd = "=2.1.1"  # ADR-0005: tests/it_panic_hook.rs
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 1
+panic = "abort"        # ADR-0007: no unwind, no backtrace
+strip = "symbols"
+
+[profile.dev]
+opt-level = 0
+debug = true

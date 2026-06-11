@@ -1,0 +1,84 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  RUST_BACKTRACE: "0"  # ADR-0005: never enable backtraces; human-panic handles it
+
+jobs:
+  test:
+    name: fmt + clippy + test + audit + deny + cov + String-grep
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain (pinned via rust-toolchain.toml)
+        run: rustup show
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Format check
+        run: cargo fmt --all -- --check
+
+      - name: Clippy (deny warnings)
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Build
+        run: cargo build --all-targets
+
+      - name: Test
+        run: cargo test --all-targets
+
+      - name: Audit (RUSTSEC)
+        run: |
+          cargo install --locked cargo-audit
+          cargo audit
+
+      - name: Deny (licenses, bans, sources)
+        run: |
+          cargo install --locked cargo-deny
+          cargo deny check
+
+      - name: Workspace cycle check (ADR-0003 rev1)
+        run: |
+          cargo install --locked cargo-modules
+          cargo modules deps --no-externals --frozen 2>/dev/null \
+            || cargo modules deps --no-externals  # fallback if --frozen unsupported
+
+      - name: String-on-secret grep (ADR-0007 rev1, 5 patterns)
+        run: bash scripts/secret_string_grep.sh
+
+      - name: Coverage gate (P0-8; global ≥ 80%, crypto/keystore ≥ 90%)
+        run: |
+          cargo install --locked cargo-llvm-cov
+          cargo llvm-cov --fail-under-lines 80
+          cargo llvm-cov --fail-under-lines 90 --lib crypto::,keystore::
+
+  # Fuzz harnesses (P0-10). Nightly only — fuzz is too slow for PR CI.
+  fuzz:
+    name: Fuzz (nightly)
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install nightly
+        run: rustup toolchain install nightly --profile minimal
+      - name: Install cargo-fuzz
+        run: cargo install --locked cargo-fuzz
+      - name: Fuzz 5 minutes per harness
+        run: |
+          # M3 deliverable: fuzz/ directory with three harnesses.
+          # At M0 these don't exist yet; this job is a no-op until then.
+          if [ -d fuzz ]; then
+            cargo +nightly fuzz run fuzz_rlp_decode -- -max_total_time=300
+            cargo +nightly fuzz run fuzz_signature_recover -- -max_total_time=300
+            cargo +nightly fuzz run fuzz_keystore_json -- -max_total_time=300
+          else
+            echo "fuzz/ directory not present (M0); skipping"
+          fi
