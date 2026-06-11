@@ -184,7 +184,8 @@ mod tests {
             "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon art",
         ];
         for v in &vectors {
-            let m = validate(v).unwrap_or_else(|e| panic!("vector should validate: {v}\n  error: {e}"));
+            let m =
+                validate(v).unwrap_or_else(|e| panic!("vector should validate: {v}\n  error: {e}"));
             assert_eq!(m.expose_secret(), v, "round-trip preserves phrase");
         }
     }
