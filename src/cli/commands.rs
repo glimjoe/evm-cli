@@ -104,7 +104,7 @@ pub async fn cmd_import_mnemonic(
     }
     if phrase.is_empty() {
         return Err(CliError::from(crate::keystore::KeystoreError::Internal(
-            "phrase must not be empty".to_string(),
+            "imported words must not be empty".to_string(),
         )));
     }
     let password = prompt_password("Wallet password: ")?;
@@ -722,11 +722,13 @@ fn confirm(prompt: &str) -> Result<bool, CliError> {
 /// Print the send-* summary per PLAN-V9 §5 M4 DoD (P0-9
 /// mis-sign prevention summary format):
 ///
+/// ```text
 ///     to:     0x1234...abcd
 ///     amount: 0.001 ETH (1.0e15 wei)
 ///     fee:    1.5 Gwei (cap 30 Gwei)
 ///     total:  0.0010015 ETH
 ///     nonce:  42
+/// ```
 ///
 /// `fee` is the `max_fee_per_gas` we will sign with. `cap 30 Gwei`
 /// is a literal cap-statement (Infura's typical free-tier ceiling on

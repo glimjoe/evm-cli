@@ -29,7 +29,7 @@ fn main() -> std::process::ExitCode {
         .with_target(false)
         .init();
 
-    tracing::info!("evm-cli v0.2.0 starting");
+    tracing::info!("evm-cli v0.2.1 starting");
 
     // (4) Test-only panic trigger (ADR-0005 verification per
     //     PLAN-V9 §11 step 12 + M3 audit C8). Gated by an env var so

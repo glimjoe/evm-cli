@@ -7,20 +7,20 @@
 [![Release](https://github.com/glimjoe/evm-cli/actions/workflows/release.yml/badge.svg)](https://github.com/glimjoe/evm-cli/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 [![MSRV 1.96](https://img.shields.io/badge/MSRV-1.96-orange.svg)](https://blog.rust-lang.org/)
-[![v0.2.0](https://img.shields.io/badge/version-0.2.0-blue.svg)](./CHANGELOG.md)
+[![v0.2.1](https://img.shields.io/badge/version-0.2.1-blue.svg)](./CHANGELOG.md)
 
 `evm-cli` is a single-binary command-line EVM wallet targeting the Sepolia testnet. It supports BIP-39/BIP-44 HD wallets, EIP-1559 transactions, ERC-20 transfers, RBF/cancel, and standard CLI ergonomics (clap + rustyline REPL).
 
 ## Install
 
-Pre-built binaries are attached to each [GitHub release](https://github.com/glimjoe/evm-cli/releases) (`evm-cli-v0.2.0-linux-x86_64.tar.gz` + `.sha256`). Or build from source:
+Pre-built binaries are attached to each [GitHub release](https://github.com/glimjoe/evm-cli/releases) (`evm-cli-v0.2.1-linux-x86_64.tar.gz` + `.sha256`). Or build from source:
 
 ```bash
 # From git (any tag or branch)
 cargo install --git https://github.com/glimjoe/evm-cli
 
 # A specific tag
-cargo install --git https://github.com/glimjoe/evm-cli --tag v0.2.0
+cargo install --git https://github.com/glimjoe/evm-cli --tag v0.2.1
 ```
 
 (Not yet published to crates.io; V1.x series is the Sepolia PoC line.)
@@ -65,6 +65,9 @@ the rationale and V2 follow-up.
 
 - [PLAN.md](./PLAN.md) — implementation plan
 - [docs/architecture.md](./docs/architecture.md) — ASCII architecture diagram
+- [docs/commands.md](./docs/commands.md) — command manual (all 11 commands)
+- [docs/troubleshooting.md](./docs/troubleshooting.md) — error-code lookup + common scenarios
+- [docs/audit/M6.md](./docs/audit/M6.md) — M6 security self-audit (30 §7 items)
 - [docs/adr/](./docs/adr/) — Architecture Decision Records
 - [docs/code_allocation.md](./docs/code_allocation.md) — error code registry
 
