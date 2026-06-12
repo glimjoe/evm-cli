@@ -57,7 +57,7 @@ the rationale and V2 follow-up.
 
 ## Documentation
 
-- [PLAN-V9.md](../PLAN-V9.md) — implementation plan
+- [PLAN.md](./PLAN.md) — implementation plan
 - [docs/adr/](./docs/adr/) — Architecture Decision Records
 - [docs/code_allocation.md](./docs/code_allocation.md) — error code registry
 
