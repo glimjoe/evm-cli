@@ -1,7 +1,7 @@
 # Build artifacts
 /target/
 
-# Cargo.lock is COMMITTED (per ADR-0004 / V8 §1 — reproducible builds)
+# Cargo.lock is COMMITTED (per ADR-0004 / PLAN-V9 §1.1 — reproducible builds)
 # Do NOT add Cargo.lock to .gitignore.
 
 # IDE / editor
@@ -9,6 +9,7 @@
 .vscode/
 *.iml
 *.swp
+*.rs.bk
 .DS_Store
 
 # Local overrides
@@ -20,3 +21,10 @@
 *.profraw
 *.profdata
 lcov.info
+
+# cargo-fuzz outputs (crash reproducers, coverage data, corpus dumps).
+# The fuzzer itself is reproducible from the seeds; artifacts are
+# uploaded to GitHub Actions as workflow artifacts on regression.
+fuzz/artifacts/
+fuzz/corpus/
+fuzz/coverage/

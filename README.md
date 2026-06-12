@@ -3,17 +3,21 @@
 > **PoC — do not use on mainnet with real assets.**
 > Linux-only CLI wallet for Sepolia testnet.
 
+[![CI](https://github.com/glimjoe/evm-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/glimjoe/evm-cli/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
+[![MSRV 1.96](https://img.shields.io/badge/MSRV-1.96-orange.svg)](https://blog.rust-lang.org/)
+[![M0–M3](https://img.shields.io/badge/milestone-M0–M3-blueviolet.svg)](./CHANGELOG.md)
+
 `evm-cli` is a single-binary command-line EVM wallet targeting the Sepolia testnet. It supports BIP-39/BIP-44 HD wallets, EIP-1559 transactions, ERC-20 transfers, RBF/cancel, and standard CLI ergonomics (clap + rustyline REPL).
 
 ## Install
 
 ```bash
-# From crates.io (when published)
-cargo install evm-cli
-
 # From git
-cargo install --git https://github.com/<org>/evm-cli
+cargo install --git https://github.com/glimjoe/evm-cli
 ```
+
+(Not yet published to crates.io; V1.x series is the Sepolia PoC line.)
 
 ## Commands
 
