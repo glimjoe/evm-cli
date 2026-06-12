@@ -13,6 +13,7 @@ pub mod cli;
 pub mod crypto;
 pub mod error;
 pub mod keystore;
+pub mod release;
 pub mod types;
 
 pub use error::CliError;

@@ -1,0 +1,193 @@
+# Architecture
+
+> Per PLAN-V9 §5 M6 DoD: ASCII architecture diagram. (Rolled into the
+> M5 release-engineering commit per the user's branch decision so the
+> release artifacts ship alongside the documentation that explains
+> what they build.)
+
+## Layered view (M0–M4 + release)
+
+```
+                ┌────────────────────────────────────────────────────┐
+                │  User (terminal)                                  │
+                │  $ evm-cli                                        │
+                │  $ evm-cli --json send-eth 0xdead… 0.001          │
+                └───────────────────┬────────────────────────────────┘
+                                    │
+                                    ▼
+        ┌───────────────────────────────────────────────────────┐
+        │  CLI layer  (src/cli/,  M4)                           │
+        │  ┌────────────┐  ┌────────────┐  ┌───────────────┐    │
+        │  │ clap       │  │ rustyline  │  │ 12-factor     │    │
+        │  │ 11 cmds    │  │ REPL       │  │ config        │    │
+        │  └─────┬──────┘  └─────┬──────┘  │ (CLI>env>     │    │
+        │        │               │         │  TOML>default)│    │
+        │        └───────┬───────┘         └───────────────┘    │
+        └────────────────┼──────────────────────────────────────┘
+                         │ commands::execute(cmd, session)
+                         ▼
+        ┌───────────────────────────────────────────────────────┐
+        │  Chain layer  (src/chain/,  M3)                       │
+        │  ┌─────────────────┐  ┌──────────────┐  ┌──────────┐  │
+        │  │ Chain trait     │  │ RpcClient    │  │ Nonce-   │  │
+        │  │ + AlloyChain    │  │ (governor    │  │ Manager  │  │
+        │  │ build_eth_      │  │  25 r/s)     │  │ 4-state  │  │
+        │  │  transfer       │  │              │  │ + flock  │  │
+        │  │ broadcast_tx    │  │              │  │ JSON log │  │
+        │  │ wait_for_receipt│  └──────┬───────┘  └────┬─────┘  │
+        │  └──────┬──────────┘         │               │        │
+        │         │                    │               │        │
+        │  ┌──────┴──────┐  ┌──────────┴─────────┐     │        │
+        │  │ rbf         │  │ erc20              │     │        │
+        │  │ compute_bump│  │ encode/decode      │     │        │
+        │  │ bump_fee    │  │ transfer/balance   │     │        │
+        │  │ cancel      │  └────────────────────┘     │        │
+        │  └─────────────┘                             │        │
+        └─────────────────────┬───────────────────────┬────────┘
+                              │                       │
+                              │ signs                 │ reads
+                              ▼                       ▼
+        ┌─────────────────────────────┐   ┌──────────────────────┐
+        │  Keystore layer  (M2)       │   │  Sepolia JSON-RPC    │
+        │  AES-128-CTR + scrypt       │   │  (Infura / public)   │
+        │  EIP-1081 format            │   │                      │
+        │  create/load/list/          │   │  EIP-1559 tx         │
+        │  delete/rename/import       │   │  eth_sendRaw-        │
+        │  + anti-side-channel        │   │  Transaction         │
+        └──────────┬──────────────────┘   └──────────┬───────────┘
+                   │                                 │
+                   │ decrypts                        │
+                   ▼                                 │
+        ┌─────────────────────────────┐              │
+        │  Crypto layer  (M1)         │              │
+        │  BIP-39/44 mnemonic         │              │
+        │  Keccak-256                 │              │
+        │  EIP-2 low-S signatures     │              │
+        │  EIP-191 personal_sign      │              │
+        └──────────┬──────────────────┘              │
+                   │                                 │
+                   ▼                                 ▼
+        ┌───────────────────────────────────────────────────────┐
+        │  Types layer  (src/types/)                            │
+        │  Secret<T: Zeroize>  Address  Amount  Nonce           │
+        │  ChainId  Signature  TxHash  BlockNumber              │
+        │  (all newtypes; ZeroizeOnDrop for Secret<Vec<u8>>)    │
+        └───────────────────────────────────────────────────────┘
+```
+
+## Cross-cutting concerns
+
+```
+        ┌───────────────────────────────────────────────────────┐
+        │  Process hardening  (src/main.rs,  M0/ADR-0007)      │
+        │  ┌─────────────────────┐  ┌──────────────────────┐   │
+        │  │ human_panic::       │  │ RLIMIT_CORE = 0      │   │
+        │  │ setup_panic!()      │  │ umask(0o077)         │   │
+        │  │ (first line of      │  │ mlock ≥ 32B Secret   │   │
+        │  │  main)              │  │ buffers              │   │
+        │  └─────────────────────┘  └──────────────────────┘   │
+        └───────────────────────────────────────────────────────┘
+        ┌───────────────────────────────────────────────────────┐
+        │  Error system  (src/error.rs,  ADR-0006)              │
+        │  Every variant carries a stable `code()` from         │
+        │  docs/code_allocation.md. CLI emits NDJSON under       │
+        │  `--json` flag.                                       │
+        └───────────────────────────────────────────────────────┘
+        ┌───────────────────────────────────────────────────────┐
+        │  Release engineering  (M5, this commit)              │
+        │  ┌──────────────────┐  ┌─────────────────────────┐    │
+        │  │ src/release.rs   │  │ .github/workflows/      │    │
+        │  │ artifact_name()  │  │ release.yml             │    │
+        │  │ platform_tag()   │  │ (4 required steps:      │    │
+        │  │ extract_changelog│  │  Build / Sha256 /       │    │
+        │  │ render_notes     │  │  Upload / Release)      │    │
+        │  │ validate_workflow│  │                         │    │
+        │  └──────────────────┘  └─────────────────────────┘    │
+        └───────────────────────────────────────────────────────┘
+```
+
+## Module dependency graph (no cycles, ADR-0003)
+
+```
+                    ┌────────┐
+                    │  cli   │  (M4, depends on chain + keystore
+                    └───┬────┘   + types + crypto via chain)
+                        │
+                        ▼
+        ┌───────────────┼───────────────┐
+        │               │               │
+        ▼               ▼               ▼
+   ┌────────┐      ┌────────┐      ┌────────┐
+   │ chain  │ ───▶ │ keystore│ ───▶ │ types  │  (foundational)
+   └───┬────┘      └───┬────┘      └────┬───┘
+       │               │                │
+       └──────┬────────┘                │
+              ▼                         ▼
+         ┌────────┐                 ┌────────┐
+         │ crypto │ ──────────────▶ │  types │
+         └────────┘                 └────────┘
+              ▲                         ▲
+              │                         │
+              └─────────────────────────┘
+                    (types is leaf)
+```
+
+## Data flow: a `send-eth` round-trip
+
+```
+[1] User types:  send-eth 0xfeed… 0.001
+    cli/commands.rs: parse args, fetch fee + nonce (one extra RPC
+    round-trip; M4 polish), show summary, prompt y/N
+        │
+        ▼
+[2] cli/session.rs: get the active unlocked signer
+    chain/AlloyChain::build_eth_transfer(to, value, data=[])
+        │  ← reads pending nonce from chain/nonce::NonceManager
+        │  ← reads fees from chain::client::RpcClient (governor 25 r/s)
+        ▼
+[3] crypto/sign.rs: sign with EIP-2 low-S + EIP-155
+    → signed tx (RLP-encoded)
+        │
+        ▼
+[4] chain/AlloyChain::broadcast_tx
+    → Sepolia eth_sendRawTransaction
+        │  (on 429: governor backs off; see M3 audit fix B9)
+        ▼
+[5] chain/AlloyChain::wait_for_receipt
+    → TxHash, BlockNumber
+        │
+        ▼
+[6] chain/nonce::NonceManager::submit(hash)
+    persists to <data_dir>/<addr>.nonce.jsonl (flock'd)
+        │
+        ▼
+[7] cli/output.rs: print "tx sent: 0x…"  (or NDJSON under --json)
+    history filter: command is NOT mnemonic/password/private-key
+    → rustyline history records the line (per M4 should_skip_history).
+```
+
+## What is intentionally NOT in the architecture
+
+Per PLAN-V9 §9 (out of scope, V2 candidates):
+
+- EIP-1193 WebSocket provider (HTTP-only via alloy reqwest).
+- WalletConnect / DApp integration.
+- Multi-chain switching (Sepolia only).
+- Windows / macOS adaptation (build matrix is linux-x86_64 +
+  linux-aarch64 only).
+- Hardware wallet (Ledger).
+- Transaction history persistence (SQLite). The pending-tx list is
+  in-memory + NonceManager on disk; no full history DB.
+- Multi-signature wallets.
+
+## Release artifact layout (M5)
+
+```
+dist/
+├── evm-cli-v0.2.0-linux-x86_64.tar.gz     # binary only (LICENSE / README kept in-repo)
+├── evm-cli-v0.2.0-linux-x86_64.sha256     # sha256sum output
+├── evm-cli-v0.2.0-linux-aarch64.tar.gz
+└── evm-cli-v0.2.0-linux-aarch64.sha256
+```
+
+Each `.tar.gz` is `tar -C target/<triple>/release -czf … evm-cli`. SHA256 is computed by `sha256sum` and stored as a sidecar (standard `sha256sum -c` format, one line: `<hash>  <filename>`).

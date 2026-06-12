@@ -1,0 +1,221 @@
+# GitHub Actions: Release (M5)
+#
+# Per PLAN-V9 §5 M5 DoD, this workflow produces:
+#   - evm-cli-v<ver>-linux-x86_64.tar.gz   + .sha256
+#   - evm-cli-v<ver>-linux-aarch64.tar.gz  + .sha256
+# and publishes a GitHub Release with the CHANGELOG section, security
+# disclaimer, and known V1 limitations as the release body.
+#
+# Per the M5 branch decision (A — hand-written, no cargo-dist), this
+# matches the project's "no-magic single-package" philosophy (ADR-0003).
+#
+# Trigger:
+#   - push: tags matching `v*`         (e.g. v0.2.0)
+#   - workflow_dispatch: manual run    (for dry-run; falls back to ref)
+#
+# Validated by `tests/it_release.rs::validate_release_workflow_yaml`
+# (see `src/release.rs`) — the four step names `Build`, `Sha256`,
+# `Upload`, `Release` MUST appear as `- name: <Step>` in this file. Do
+# not rename them.
+
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to release (e.g. v0.2.0). Leave empty to use the push ref.'
+        required: false
+        default: ''
+
+permissions:
+  contents: write   # required to create the GitHub Release
+
+# ADR-0005: never enable backtraces; human-panic handles panics.
+env:
+  RUST_BACKTRACE: "0"
+
+jobs:
+  # ── Build matrix: linux-x86_64 (glibc) + linux-aarch64 (musl static) ──
+  build:
+    name: Build ${{ matrix.artifact }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            artifact: linux-x86_64
+            cross: false
+          - target: aarch64-unknown-linux-musl
+            artifact: linux-aarch64
+            cross: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain (pinned via rust-toolchain.toml)
+        run: rustup show
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+
+      - name: Install cross-compile target + linker
+        if: matrix.cross
+        run: |
+          rustup target add ${{ matrix.target }}
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
+
+      - name: Install native target only
+        if: ${{ !matrix.cross }}
+        run: rustup target add ${{ matrix.target }}
+
+      # ── Build (REQUIRED STEP NAME; do not rename) ─────────────────
+      - name: Build
+        run: cargo build --release --target ${{ matrix.target }} --locked
+
+      - name: Strip binary
+        run: |
+          # `strip` reduces the tarball; the linker already stripped
+          # debug info per the [profile.release] in Cargo.toml, but
+          # belt-and-braces here.
+          strip target/${{ matrix.target }}/release/evm-cli || true
+
+      - name: Resolve version
+        id: ver
+        run: |
+          # Strip leading `v` from the tag (`v0.2.0` -> `0.2.0`).
+          TAG="${{ github.ref_name }}"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ github.event.inputs.tag }}"
+          fi
+          if [ -z "$TAG" ]; then
+            echo "::error::No tag resolved (github.ref_name empty and workflow_dispatch input is blank)."
+            exit 1
+          fi
+          VERSION="${TAG#v}"
+          echo "tag=$TAG"     >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Tar
+        run: |
+          mkdir -p release
+          tar -C target/${{ matrix.target }}/release -czf \
+            release/evm-cli-v${{ steps.ver.outputs.version }}-${{ matrix.artifact }}.tar.gz \
+            evm-cli
+
+      # ── Sha256 (REQUIRED STEP NAME; do not rename) ───────────────
+      - name: Sha256
+        run: |
+          TARBALL="evm-cli-v${{ steps.ver.outputs.version }}-${{ matrix.artifact }}.tar.gz"
+          (cd release && sha256sum "$TARBALL" > "${TARBALL%.tar.gz}.sha256")
+          cat "release/${TARBALL%.tar.gz}.sha256"
+
+      # ── Upload (REQUIRED STEP NAME; do not rename) ───────────────
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: evm-cli-${{ matrix.artifact }}
+          path: |
+            release/evm-cli-v${{ steps.ver.outputs.version }}-${{ matrix.artifact }}.tar.gz
+            release/evm-cli-v${{ steps.ver.outputs.version }}-${{ matrix.artifact }}.sha256
+          if-no-files-found: error
+          retention-days: 14
+
+  # ── Publish GitHub Release ─────────────────────────────────────────
+  release:
+    name: Publish GitHub Release
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Resolve version
+        id: ver
+        run: |
+          TAG="${{ github.ref_name }}"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            TAG="${{ github.event.inputs.tag }}"
+          fi
+          VERSION="${TAG#v}"
+          if [ -z "$TAG" ] || [ -z "$VERSION" ]; then
+            echo "::error::No tag resolved."
+            exit 1
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Render release notes
+        # Combines: CHANGELOG section + security disclaimer + known
+        # limitations (per PLAN-V9 §5 M5 DoD: "Release includes
+        # CHANGELOG, security disclaimer, known limitations").
+        run: |
+          VERSION="${{ steps.ver.outputs.version }}"
+          NOTES=artifacts/RELEASE_NOTES.md
+          {
+            echo "## What's Changed in v$VERSION"
+            echo ""
+            # Extract the `## [<version>]` section from CHANGELOG.md
+            # using awk. Stops at the next `## [` heading. Falls back
+            # to a placeholder if the section is missing (e.g. a
+            # workflow_dispatch release without a CHANGELOG bump).
+            awk -v ver="$VERSION" '
+              BEGIN { flag = 0 }
+              $0 ~ "^## \\[" ver "\\]" { flag = 1; next }
+              /^## \[/                  { flag = 0 }
+              flag                       { print }
+            ' CHANGELOG.md > .changelog_section.md
+            if [ -s .changelog_section.md ]; then
+              cat .changelog_section.md
+            else
+              echo "_No CHANGELOG entry for v$VERSION yet — please add one before tagging._"
+            fi
+            echo ""
+            echo "## Security"
+            echo ""
+            echo "**SECURITY DISCLAIMER:** This is a proof-of-concept release for the Sepolia testnet."
+            echo "\`evm-cli\` has not been audited by a third party. **Do not use on mainnet with"
+            echo "assets of real value.** See [SECURITY.md](https://github.com/glimjoe/evm-cli/blob/v$VERSION/SECURITY.md)."
+            echo ""
+            echo "## Known V1 limitations (carried forward from 0.1.0)"
+            echo ""
+            echo "- **KDF cost**: scrypt N=2^13 is 16× below the OWASP 2024 baseline (N=2^17). See ADR-0009."
+            echo "- **Coverage gate**: per-module passes (crypto/keystore ≥ 90%); global does not (61.46% < 80% target). Anvil-driven integration tests cover the gap behaviorally."
+            echo "- **Sepolia-only**: mainnet is out of scope (PLAN-V9 §9)."
+            echo ""
+            echo "## Verify"
+            echo ""
+            echo '```bash'
+            echo "# After downloading both files from this release:"
+            echo "sha256sum -c evm-cli-v$VERSION-linux-x86_64.sha256"
+            echo '```'
+            echo ""
+            echo "**Full Changelog**: https://github.com/glimjoe/evm-cli/compare/v0.1.0...v$VERSION"
+          } > "$NOTES"
+          echo "─── release notes ───"
+          cat "$NOTES"
+          echo "─────────────────────"
+
+      # ── Release (REQUIRED STEP NAME; do not rename) ──────────────
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ver.outputs.tag }}
+          name: ${{ steps.ver.outputs.tag }}
+          body_path: artifacts/RELEASE_NOTES.md
+          files: |
+            artifacts/*.tar.gz
+            artifacts/*.sha256
+          fail_on_unmatched_files: true
+          draft: false
+          prerelease: ${{ contains(steps.ver.outputs.tag, '-') }}

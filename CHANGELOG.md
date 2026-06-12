@@ -7,25 +7,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Planned (M6 — Self-Audit + Documentation Wrap, per PLAN-V9 §5)
+- Security self-audit per PLAN-V9 §7 (every item verified with evidence)
+- Refinement: live REPL `json`/`human` toggle (P0-1 stretch)
+- Optional: clipboard support (P0-7 stretch)
+- Optional: ERC-20 broadcast via calldata path (currently V1 builds a
+  value=0 envelope; calldata computed but not broadcast — see ADR-0010
+  future)
+
+## [0.2.0] — 2026-06-12
+
+### Added
+
+- **M5 — Release Engineering (PLAN-V9 §5 M5 DoD)**:
+  - `.github/workflows/release.yml` — hand-written GitHub Actions
+    workflow (option A from the M5 branch decision; rationale: matches
+    the project's "no-magic single-package" philosophy, ADR-0003).
+  - Multi-arch release artifacts per tag:
+    - `evm-cli-v0.2.0-linux-x86_64.tar.gz` (primary, CI-tested)
+    - `evm-cli-v0.2.0-linux-aarch64.tar.gz` (cross-compiled, best-effort)
+  - SHA256 sidecar files alongside each tarball.
+  - `scripts/build_release_artifact.sh` — local-build helper that
+    mirrors the CI steps (so contributors can dry-run a release
+    before pushing a tag).
+  - `docs/architecture.md` — ASCII architecture diagram (M5 +
+    architecture-diagram DoD rolled into one atomic commit, per the
+    user's M5 branch decision).
+  - `evm_cli::release` module (testable surface for the release
+    pipeline; see `src/release.rs`):
+    - `ReleaseVersion` newtype (validates `X.Y.Z` form, rejects
+      `Unreleased` / `v`-prefixed / pre-release tags)
+    - `artifact_name(version, target) -> "evm-cli-v0.2.0-linux-x86_64.tar.gz"`
+    - `sha256_sidecar(version, target) -> "evm-cli-v0.2.0-linux-x86_64.sha256"`
+    - `platform_tag(target) -> "linux-x86_64"` (normalizes Rust triples)
+    - `extract_changelog_section(changelog, version) -> body`
+    - `render_release_notes(changelog, disclaimer, limits) -> String`
+    - `validate_release_workflow_yaml(yaml) -> Result<(), MissingStep>`
+      (guards the workflow against silent step drops)
+  - 20 new integration tests in `tests/it_release.rs` + 4 new artifact
+    tests in `tests/it_release_workflow.rs` (validate the on-disk
+    `release.yml` against `validate_release_workflow_yaml`). All green.
+  - 4 new unit tests for `ReleaseVersion` in `src/release.rs` (all green).
+
 ### Changed
 
-- **M4 polish (this commit)**: P0-9 send-summary now includes the
-  `fee`/`total`/`nonce` fields per PLAN-V9 §5 M4 DoD example. The
-  fee is fetched up-front via `chain.estimate_fees()` + `chain
-  .pending_nonce()` (one extra RPC round-trip) so the user sees the
-  exact value they are about to sign.
-- **M4 polish (this commit)**: `Chain::build_eth_transfer` now
-  takes a `data: Vec<u8>` parameter (was an implicit empty input).
-  `cmd_send_token` passes the ERC-20 calldata so the broadcast
-  actually executes the `transfer(to, amount)` call on-chain
-  (previously a value=0 + empty-data no-op). RBF / cancel still
-  pass `vec![]` (those are plain ETH transfers).
-- **M4 polish (this commit)**: New `tests/it_cli_repl.rs`
-  integration test (7 tests, no anvil dependency): `--version`,
-  `--help` lists all 11 commands, `--json` emits NDJSON errors,
-  human mode emits structured errors, panic-safety on bad input.
+- **Version bump 0.1.0 → 0.2.0** (MINOR; PLAN-V9 §1.1 release policy).
+  Triggers: new release-engineering capability, not runtime change.
+  No CLI surface change. `cargo install --git ...` continues to work.
+- `Cargo.toml` `version = "0.2.0"`.
+- `src/main.rs` startup banner: `evm-cli v0.2.0 starting`.
 
-### Known V1 limitations
+### Security
+
+- No security-critical changes. All hardening (P0-2 memory, P0-7
+  output, scrypt KDF) is unchanged from 0.1.0 — see ADR-0007 rev1,
+  ADR-0009.
+
+### Known V1 limitations (carried forward from 0.1.0)
 
 - **P0-8 coverage gate**: per-module gate **passes** (crypto/ ≥
   97%, keystore/ = 90.56%, both ≥ 90%). **Global gate does not
@@ -41,18 +79,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
         functions (estimated 50–100 LoC, target 70–75% global);
     (b) write a SEPOLIA-fork anvil integration test that exercises
         the full REPL flow (significant investment; defer to V2).
+- **Keystore KDF**: `eth-keystore` 0.5.0 uses scrypt N=8192, 16× below
+  OWASP 2024 baseline. Accepted for V1 (interop with geth/ethers.js).
+  See ADR-0009.
+- **PoC — do not use on mainnet with real assets.** This release is a
+  proof-of-concept for the Sepolia testnet. Mainnet use is out of
+  scope (PLAN-V9 §9).
 
-## [Unreleased (pre-M5)]
+### Test results
 
-### Planned (M5 — Release Engineering, then M6 — Self-Audit)
-- `.github/workflows/release.yml` (or `cargo dist` config) producing
-  `evm-cli-v0.2.0-linux-x86_64.tar.gz` + `.sha256`
-- `docs/architecture.md` ASCII diagram
-- Self-audit per PLAN-V9 §7 (every item verified with evidence)
-- Refinements: live REPL `json`/`human` toggle, clipboard support
-  (P0-7 stretch), ERC-20 broadcast via calldata (currently V1
-  builds a value=0 envelope; the calldata is computed but not
-  broadcast through the ERC-20 path — see ADR-0010 future)
+- `cargo build --all-targets`: clean
+- `cargo clippy --all-targets -- -D warnings`: clean
+- `cargo fmt --all -- --check`: clean
+- `cargo test --tests --lib`: **153 passing** (118 lib unit + 7 e2e
+  Sepolia + 3 anvil + 1 panic hook + 20 release + 4 release_workflow
+  integration) + 1 `#[ignore]` Sepolia bump test
+- `bash scripts/secret_string_grep.sh`: 0 matches
 
 ## [0.1.0] — 2026-06-12
 
@@ -167,5 +209,6 @@ First M0–M3 release. Sepolia PoC; not for mainnet.
   integration + 1 panic hook + 1 Sepolia E2E `#[ignore]`)
 - `bash scripts/secret_string_grep.sh`: 0 matches
 
+[0.2.0]: https://github.com/glimjoe/evm-cli/releases/tag/v0.2.0
 [0.1.0]: https://github.com/glimjoe/evm-cli/releases/tag/v0.1.0
-[Unreleased]: https://github.com/glimjoe/evm-cli/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/glimjoe/evm-cli/compare/v0.2.0...HEAD
