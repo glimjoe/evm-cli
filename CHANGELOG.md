@@ -7,17 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Planned (M4 — CLI layer)
-- `src/cli/` module: clap derive + rustyline REPL
-- 11 commands (`create-wallet`, `import-mnemonic`, `list`, `use`,
-  `unlock`, `balance`, `send-eth`, `send-token`, `sign-message`,
-  `pending-tx`, `exit`)
-- `--json` global flag, y/N confirmation, `--dry-run` /
-  `--bump-fee` / `--cancel` flags, EIP-55 display, history filter
-  (`should_skip_history` predicate)
-- This work is the next milestone per PLAN-V9 §5 M4 DoD.
+### Planned (M5 — Release Engineering, then M6 — Self-Audit)
+- `.github/workflows/release.yml` (or `cargo dist` config) producing
+  `evm-cli-v0.2.0-linux-x86_64.tar.gz` + `.sha256`
+- `docs/architecture.md` ASCII diagram
+- Self-audit per PLAN-V9 §7 (every item verified with evidence)
+- Refinements: live REPL `json`/`human` toggle, clipboard support
+  (P0-7 stretch), ERC-20 broadcast via calldata (currently V1
+  builds a value=0 envelope; the calldata is computed but not
+  broadcast through the ERC-20 path — see ADR-0010 future)
 
 ## [0.1.0] — 2026-06-12
+
+### Added
+
+- **M4 — CLI Layer** (this commit, per PLAN-V9 §5 M4 DoD):
+  - `src/cli/` module: clap derive + rustyline REPL.
+  - 11 commands: `create-wallet`, `import-mnemonic`, `list`, `use`,
+    `unlock`, `balance`, `send-eth` (with `--bump-fee`/`--cancel`/
+    `--dry-run`), `send-token` (with `--decimals` and `--dry-run`),
+    `sign-message`, `pending-tx`, `exit`. Plus `help` for in-REPL use.
+  - 12-factor config (CLI > env > TOML > default):
+    `EVMCLI_RPC_URL`, `EVMCLI_KEYSTORE_DIR`, `EVMCLI_DATA_DIR`,
+    `EVMCLI_JSON`, `EVMCLI_NO_HISTORY`, `EVMCLI_CHAIN_ID`,
+    `EVMCLI_RPC_TIMEOUT`. Optional TOML at
+    `~/.config/evm-cli/config.toml`.
+  - `--json` global flag: NDJSON output (`{"ok": true, "data": ...}`
+    / `{"ok": false, "code": ..., "message": ..., "cause": [...]}`)
+  - y/N confirmation (default N) for `send-eth`, `send-token`, RBF,
+    Cancel.
+  - `--dry-run` flag for `send-eth` and `send-token`.
+  - EIP-55 mixed-case display for all addresses (`types::Address`
+    Display impl).
+  - `should_skip_history` predicate; lines containing `mnemonic`,
+    `password`, `--private-key`, or `import-mnemonic` are NOT added
+    to the rustyline history file.
+  - `--no-history` global flag to disable history entirely.
+  - Startup validation: keystore directory writability (probe
+    write + remove) and chain id match against expected (Sepolia).
+  - `main.rs` reworked: still installs `human_panic::setup_panic!()`
+    + `harden_process()` (per ADR-0005 + ADR-0007), then dispatches
+    to `cli::run()` via a current-thread tokio runtime.
+  - PoC warning printed to stderr at startup (skipped only when
+    `EVMCLI_JSON=true`).
+
+- **M0 — Scaffolding** (per PLAN-V9 §11):
 
 First M0–M3 release. Sepolia PoC; not for mainnet.
 

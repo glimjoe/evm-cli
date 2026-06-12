@@ -1,15 +1,16 @@
 // SPDX-License-Identifier: MIT
 //
-// evm-cli M0 entry point.
+// evm-cli entry point.
 //
 // Per ADR-0005, the FIRST line of main() installs a panic hook that
 // suppresses panic location / payload / backtrace. Per ADR-0007 rev1,
 // the second concern is process hardening (umask + RLIMIT_CORE) before
-// any Secret allocation.
+// any Secret allocation. Then the M4 CLI takes over (parse + dispatch
+// or REPL).
 
 #![allow(unused_crate_dependencies)] // M1+ deps declared per PLAN-V9 §11 step 4
 
-fn main() {
+fn main() -> std::process::ExitCode {
     // (1) Panic hook — FIRST line, before any allocation. ADR-0005.
     //    Note: human-panic 2.x exposes `setup_panic!()`, not `setup!()`.
     human_panic::setup_panic!();
@@ -28,7 +29,7 @@ fn main() {
         .with_target(false)
         .init();
 
-    tracing::info!("evm-cli v0.1.0 starting (M0 scaffolding)");
+    tracing::info!("evm-cli v0.1.0 starting");
 
     // (4) Test-only panic trigger (ADR-0005 verification per
     //     PLAN-V9 §11 step 12 + M3 audit C8). Gated by an env var so
@@ -39,14 +40,18 @@ fn main() {
         trigger_test_panic();
     }
 
-    // (5) M0 banner. M4+ replaces this with the REPL.
-    println!("evm-cli v0.1.0 — M0 scaffolding complete.");
-    println!("No commands implemented yet; this is a smoke test for the");
-    println!("panic hook, process hardening, and tracing pipeline.");
-    println!();
-    println!("Planned M1+ commands (per PLAN-V9 §5):");
-    println!("  create-wallet, import-mnemonic, list, use, unlock,");
-    println!("  balance, send-eth, send-token, sign-message, pending-tx, exit");
+    // (5) M4 CLI dispatch.
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build();
+    let rt = match runtime {
+        Ok(rt) => rt,
+        Err(e) => {
+            eprintln!("fatal: could not build tokio runtime: {e}");
+            return std::process::ExitCode::from(1);
+        }
+    };
+    rt.block_on(evm_cli::cli::run())
 }
 
 /// Test-only panic trigger (ADR-0005). The payload contains a
