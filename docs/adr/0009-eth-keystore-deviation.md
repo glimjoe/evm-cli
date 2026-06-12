@@ -1,15 +1,17 @@
-# ADR-0009: Standard Ethereum Keystore Format (M2 deviation from V8 §5)
+# ADR-0009: Standard Ethereum Keystore Format (M2 deviation from PLAN-V9 §5)
 
 > Status: **Accepted**
 > Date: 2026-06-11
 > Deciders: evm-cli maintainers
-> Supersedes: V8 §5 M2 DoD (Argon2id + AES-256-GCM) and V10 §19 (which adopted
-> the deviation but did not file a standalone ADR)
+> Supersedes: PLAN-V9 §5 M2 DoD (Argon2id + AES-256-GCM) and the
+> earlier M2 commit `d442521` (which adopted the deviation but did not
+> file a standalone ADR; that commit message referenced a non-existent
+> "V10 §19")
 > Related: M2-REVIEW.md §C "Deviations from spec — judgment call"
 
 ## Context and Problem Statement
 
-V8 §5 M2 DoD specified an in-house keystore format:
+V9 §5 M2 DoD specified an in-house keystore format:
 
 - **KDF**: Argon2id (t=3, m=65536, p=1)
 - **Cipher**: AES-256-GCM
@@ -56,7 +58,7 @@ ADR.
 
 ## Considered Options
 
-- **A. Revert to Argon2id + AES-256-GCM, hand-rolled codec** (V8 §5
+- **A. Revert to Argon2id + AES-256-GCM, hand-rolled codec** (V9 §5
   original spec). Add `argon2 = "=0.5.x"` + `aes-gcm = "=0.11.0-rc.4"`
   to `Cargo.toml`. ~500 LoC of crypto code, 10+ unit tests, 12 existing
   keystore format tests would need to be regenerated with new test
@@ -89,7 +91,7 @@ are accepted for V1:
    Ethereum standard since 2016. The MAC is verified on every decrypt
    (see `eth-keystore 0.5.0` `decrypt_key`); a wrong password returns
    `MacMismatch` and we collapse that to `EVMK-001 InvalidPassword`
-   (anti-side-channel per V8 §5).
+   (anti-side-channel per PLAN-V9 §5).
 
 3. **Multi-file layout instead of single `keystore.json`**. Justified
    by the M2 review's §C.3 — single JSON would force rewrite-on-every-
@@ -126,7 +128,7 @@ in tests), umask is not set. The test fixture `temp_store()` uses
 
 ### `PermissionDenied` collapses into `Io(String)`
 
-V8 §5 had a separate `EVMK-008 PermissionDenied { path: PathBuf }` code.
+PLAN-V9 §5 had a separate `EVMK-008 PermissionDenied { path: PathBuf }` code.
 This has been collapsed into `EVMK-011 Io(String)` because the path
 is already in the `String` payload, and the variant is rarely hit
 (file mode 0600 + umask 0o077 makes it nearly unreachable on Linux
@@ -159,8 +161,10 @@ for the demotion.
 
 ## References
 
-- PLAN-V8 §5 M2 DoD (Argon2id + AES-256-GCM, original spec)
-- PLAN-V10 §19 (deviation reference, but no ADR until this document)
+- PLAN-V9 §5 M2 DoD (Argon2id + AES-256-GCM, original spec)
+- The earlier M2 commit `d442521` (deviation reference, but no ADR
+  until this document; that commit referenced a non-existent
+  "V10 §19")
 - M2-REVIEW.md §C "Deviations from spec — judgment call"
 - M2-REVIEW.md §F item 1 (mnemonic String leak)
 - `eth-keystore 0.5.0` source: `~/.cargo/registry/.../eth-keystore-0.5.0/src/lib.rs`

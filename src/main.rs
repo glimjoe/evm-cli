@@ -7,7 +7,7 @@
 // the second concern is process hardening (umask + RLIMIT_CORE) before
 // any Secret allocation.
 
-#![allow(unused_crate_dependencies)] // M1+ deps declared per V8 §11 step 4
+#![allow(unused_crate_dependencies)] // M1+ deps declared per PLAN-V9 §11 step 4
 
 fn main() {
     // (1) Panic hook — FIRST line, before any allocation. ADR-0005.
@@ -30,14 +30,38 @@ fn main() {
 
     tracing::info!("evm-cli v0.1.0 starting (M0 scaffolding)");
 
-    // (4) M0 banner. M4+ replaces this with the REPL.
+    // (4) Test-only panic trigger (ADR-0005 verification per
+    //     PLAN-V9 §11 step 12 + M3 audit C8). Gated by an env var so
+    //     it cannot be triggered in production builds; integration
+    //     test `tests/it_panic_hook.rs` sets it to verify the panic
+    //     hook does not leak secret material into stderr.
+    if std::env::var("EVMC_TEST_TRIGGER_PANIC").is_ok() {
+        trigger_test_panic();
+    }
+
+    // (5) M0 banner. M4+ replaces this with the REPL.
     println!("evm-cli v0.1.0 — M0 scaffolding complete.");
     println!("No commands implemented yet; this is a smoke test for the");
     println!("panic hook, process hardening, and tracing pipeline.");
     println!();
-    println!("Planned M1+ commands (per V8 §5):");
+    println!("Planned M1+ commands (per PLAN-V9 §5):");
     println!("  create-wallet, import-mnemonic, list, use, unlock,");
     println!("  balance, send-eth, send-token, sign-message, pending-tx, exit");
+}
+
+/// Test-only panic trigger (ADR-0005). The payload contains a
+/// recognizable fake private key + BIP-39 mnemonic so the integration
+/// test can assert that *neither* appears in stderr (human-panic
+/// suppresses location, payload, and backtrace).
+#[allow(clippy::panic)] // intentional; this is the test path
+fn trigger_test_panic() {
+    let fake_key = "0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+    let fake_mnemonic =
+        "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+    panic!(
+        "EVMC_TEST_TRIGGER_PANIC set: synthetic panic for ADR-0005 verification. \
+         fake_key={fake_key} fake_mnemonic={fake_mnemonic}"
+    );
 }
 
 /// Process hardening per ADR-0007 rev1 (Decision Outcome §2).

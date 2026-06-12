@@ -58,7 +58,7 @@ This ADR records the M0 decision and the conditions under which it should be rev
   - `chain` → `types`, `crypto`
   - `cli` → `types`, `crypto`, `keystore`, `chain`
 
-  **Why `Secret<T>` lives in `types/`:** it is a generic wrapper (`Secret<T: ZeroizeOnDrop>(T)`) used by `crypto` (for mnemonic/seed), `keystore` (for encrypted payloads), and `chain` (for in-flight signed tx material). It has no crypto-specific logic, so it is a primitive, not a domain module.
+  **Why `Secret<T>` lives in `types/`:** it is a generic wrapper (`Secret<T: Zeroize>` with explicit `Drop` impl per V9 §18 correction item #5) used by `crypto` (for mnemonic/seed), `keystore` (for encrypted payloads), and `chain` (for in-flight signed tx material). It has no crypto-specific logic, so it is a primitive, not a domain module.
 
   **No cycles allowed.** Mechanically enforced by a CI job that runs `cargo-modules deps --no-externals` (added in M0) and fails if the internal graph contains a cycle. `cargo-deny` does not natively detect intra-crate cycles, so `cargo-modules` is the chosen tool.
 

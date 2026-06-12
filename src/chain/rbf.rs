@@ -17,9 +17,10 @@
 //
 // Both EIP-1559 parameters are bumped symmetrically.
 
-use alloy_primitives::{Address, TxHash, U256};
+use alloy_primitives::U256;
 
-use crate::chain::ChainError;
+use crate::chain::{Chain, ChainError};
+use crate::types::{Address, TxHash};
 
 /// Bump-fee result: the new signed transaction (or an error).
 pub struct BumpResult {
@@ -64,19 +65,92 @@ pub fn compute_bump(
     (new_max, new_prio)
 }
 
-/// Stub for the full RBF / Cancel pipeline. The actual signing,
-/// nonce management, and broadcast happen in M3 finalization. The
-/// pure-fee-bump math is implemented here and unit-tested.
-pub async fn bump_fee(_addr: Address, _tx_hash: TxHash) -> Result<BumpResult, ChainError> {
-    Err(ChainError::Internal(
-        "bump_fee: not yet implemented in M3 skeleton".to_string(),
-    ))
+/// Build a replacement transaction for an RBF / Cancel operation.
+///
+/// This is the **shared core** of `bump_fee` and `cancel`:
+///  1. Look up the original tx (to recover `to`, `value`, `data`,
+///     `nonce`).
+///  2. Compute bumped fees (per `compute_bump`).
+///  3. Build a new EIP-1559 tx with the same `to`/`value`/`data`/
+///     `nonce` but the bumped fees.
+///  4. Sign + broadcast.
+///
+/// The `value` for a cancel is overridden to `0` and `to` is the
+/// signer (self-send); the RBF path keeps the original `to` and
+/// `value`.
+pub async fn bump_fee<C: Chain + ?Sized>(
+    chain: &C,
+    signer: &alloy_signer_local::PrivateKeySigner,
+    original: TxHash,
+) -> Result<BumpResult, ChainError> {
+    let info = chain
+        .get_tx(original)
+        .await?
+        .ok_or(ChainError::TxNotFound { hash: original })?;
+
+    // Estimate current fees.
+    let est = chain.estimate_fees().await?;
+    let (new_max, new_prio) = compute_bump(
+        info.max_fee_per_gas,
+        info.max_priority_fee_per_gas,
+        est.base_fee,
+        est.priority_fee,
+    );
+
+    // For RBF (not cancel), keep the original `to` and `value`.
+    let to = info.to.ok_or(ChainError::Internal(
+        "RBF: original tx has no `to` (contract creation); cannot bump".to_string(),
+    ))?;
+    let value = crate::types::Amount::from_wei(info.value);
+
+    let signed = chain
+        .build_eth_transfer(
+            signer,
+            to,
+            value,
+            Some(crate::types::Amount::from_wei(new_max)),
+            Some(crate::types::Amount::from_wei(new_prio)),
+        )
+        .await?;
+    let new_hash = chain.broadcast_tx(&signed.raw).await?;
+    Ok(BumpResult {
+        new_hash,
+        new_max_fee_per_gas: new_max,
+        new_max_priority_fee_per_gas: new_prio,
+    })
 }
 
-pub async fn cancel(_addr: Address, _tx_hash: TxHash) -> Result<TxHash, ChainError> {
-    Err(ChainError::Internal(
-        "cancel: not yet implemented in M3 skeleton".to_string(),
-    ))
+/// Cancel a pending transaction by sending a 0-value self-send with
+/// the same nonce and bumped fees. See ADR-0008 rev1.
+pub async fn cancel<C: Chain + ?Sized>(
+    chain: &C,
+    signer: &alloy_signer_local::PrivateKeySigner,
+    original: TxHash,
+) -> Result<TxHash, ChainError> {
+    let info = chain
+        .get_tx(original)
+        .await?
+        .ok_or(ChainError::TxNotFound { hash: original })?;
+
+    let est = chain.estimate_fees().await?;
+    let (new_max, new_prio) = compute_bump(
+        info.max_fee_per_gas,
+        info.max_priority_fee_per_gas,
+        est.base_fee,
+        est.priority_fee,
+    );
+
+    let self_addr: Address = signer.address().into();
+    let signed = chain
+        .build_eth_transfer(
+            signer,
+            self_addr,
+            crate::types::Amount::ZERO,
+            Some(crate::types::Amount::from_wei(new_max)),
+            Some(crate::types::Amount::from_wei(new_prio)),
+        )
+        .await?;
+    chain.broadcast_tx(&signed.raw).await
 }
 
 #[cfg(test)]

@@ -2,7 +2,7 @@
 //
 // ERC-20 transfer via sol! macro.
 //
-// Per V8 §5 M3 DoD: "ERC-20 transfer: minimal ABI (`balanceOf` +
+// Per PLAN-V9 §5 M3 DoD: "ERC-20 transfer: minimal ABI (`balanceOf` +
 // `transfer`) loaded; `sol!` macro or manual encoding".
 //
 // We use `alloy::sol!` to generate typed Rust bindings for the

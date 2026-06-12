@@ -2,7 +2,7 @@
 //
 // Address derivation (BIP-44) and EIP-55 checksum display.
 //
-// V8 §5 M1 DoD: "BIP-39 → BIP-44 (`m/44'/60'/0'/0/{index}`) → Address pipeline correct".
+// PLAN-V9 §5 M1 DoD: "BIP-39 → BIP-44 (`m/44'/60'/0'/0/{index}`) → Address pipeline correct".
 //
 // We use `alloy_signer_local::MnemonicBuilder` for the heavy lifting
 // (BIP-39 PBKDF2 + BIP-32 HD derivation), then call `signer.address()`

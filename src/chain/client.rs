@@ -2,7 +2,7 @@
 //
 // RpcClient — rate-limited wrapper around an alloy Provider.
 //
-// V8 §5 M3 DoD: "RPC rate limit: `governor::Quota::per_second(25)` (Infura
+// PLAN-V9 §5 M3 DoD: "RPC rate limit: `governor::Quota::per_second(25)` (Infura
 // free tier ceiling)".
 //
 // We use `governor::RateLimiter` (default quota = 25 req/s, configurable)
@@ -25,7 +25,7 @@ use url::Url;
 
 use crate::chain::ChainError;
 
-/// Default rate limit: 25 requests per second (per V8 §5 M3).
+/// Default rate limit: 25 requests per second (per PLAN-V9 §5 M3).
 pub const DEFAULT_RPS: u32 = 25;
 
 /// Rate-limited JSON-RPC client. The inner provider type is opaque

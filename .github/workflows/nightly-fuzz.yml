@@ -1,0 +1,68 @@
+# nightly-fuzz.yml
+#
+# Per PLAN-V9 §5 M3 DoD (P0-10) and §6 CI/CD nightly row, this
+# workflow runs the three `cargo-fuzz` harnesses on a nightly
+# schedule. Each harness runs for 5 minutes. Crash artifacts are
+# uploaded; the release is blocked if any harness regresses.
+#
+# Note: this workflow is `nightly` schedule only (per PLAN-V9 §6).
+# It does NOT run on PRs (those use the regular ci.yml's `fuzz`
+# job, which is gated on `github.event_name != 'pull_request'`
+# and only runs the harnesses if the `fuzz/` directory exists).
+
+name: nightly-fuzz
+
+on:
+  schedule:
+    # Run at 03:00 UTC every day
+    - cron: "0 3 * * *"
+  workflow_dispatch: # allow manual trigger
+
+env:
+  RUST_BACKTRACE: "0"  # ADR-0005: never enable backtraces; human-panic handles it
+
+jobs:
+  fuzz:
+    name: Fuzz (nightly, 5 min per harness)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain (pinned via rust-toolchain.toml)
+        run: rustup show
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install nightly
+        run: rustup toolchain install nightly --profile minimal
+
+      - name: Install cargo-fuzz
+        run: cargo install --locked cargo-fuzz
+
+      - name: Run fuzz_rlp_decode (5 min)
+        run: |
+          if [ -d fuzz ]; then
+            cargo +nightly fuzz run fuzz_rlp_decode -- -max_total_time=300
+          else
+            echo "fuzz/ directory not present; skipping"
+            exit 1  # fail so a missing fuzz/ directory is loud
+          fi
+
+      - name: Run fuzz_signature_recover (5 min)
+        run: |
+          if [ -d fuzz ]; then
+            cargo +nightly fuzz run fuzz_signature_recover -- -max_total_time=300
+          else
+            echo "fuzz/ directory not present; skipping"
+            exit 1
+          fi
+
+      - name: Run fuzz_keystore_json (5 min)
+        run: |
+          if [ -d fuzz ]; then
+            cargo +nightly fuzz run fuzz_keystore_json -- -max_total_time=300
+          else
+            echo "fuzz/ directory not present; skipping"
+            exit 1
+          fi

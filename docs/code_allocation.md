@@ -56,7 +56,7 @@ its `code()` arm returns the new code; the old string is preserved as a
 
 | Code | Status | Variant | Notes |
 |---|---|---|---|
-| EVMC-001 | ASSIGNED | `RpcError { kind: RpcErrorKind }` | See RpcErrorKind sub-enum below |
+| EVMC-001 | ASSIGNED | `Rpc(String)` | Underlying RPC failure (timeout, 429, server error, deserialization). The string is a free-form description (e.g. `"get_balance: ..."`); the structured `RpcErrorKind` sub-enum from the M0 placeholder was collapsed into a single string in M3 to keep the API surface minimal. |
 | EVMC-002 | ASSIGNED | `NonceStuck { addr, stuck_for: Duration }` | NonceManager reports timeout |
 | EVMC-003 | ASSIGNED | `FeeUnderpriced { required, offered }` | RPC rejected for fee |
 | EVMC-004 | ASSIGNED | `InvalidAmount { value: String, reason: &'static str }` | U256 parse / overflow (P0-4) |
@@ -66,15 +66,8 @@ its `code()` arm returns the new code; the old string is preserved as a
 | EVMC-008 | ASSIGNED | `TxAlreadyMined { hash, block }` | RBF / Cancel: already in a block *(ADR-0008 rev1)* |
 | EVMC-009 | ASSIGNED | `InsufficientFunds { required, available }` | Balance < value + fee |
 | EVMC-010 | ASSIGNED | `GasEstimationFailed { reason: String }` | `eth_estimateGas` revert / timeout |
-| EVMC-099 | RESERVED | (future) | |
-
-**RpcErrorKind sub-variants** (all under EVMC-001):
-- `Timeout(Duration)` — HTTP timeout
-- `ConnectionRefused` — RPC unreachable
-- `HttpStatus(u16, String)` — non-200 HTTP
-- `RateLimited { retry_after: Option<Duration> }` — 429
-- `ServerError(i64, String)` — JSON-RPC error code + message
-- `Deserialization(String)` — response body parse fail
+| EVMC-099 | ASSIGNED | `ReceiptTimeout(Duration)` | 120s receipt polling timed out (M3 receipt pipeline) |
+| EVMC-999 (via `EVM-999`) | ASSIGNED | `Internal(String)` | Other internal error (signing, internal invariant) — surfaces as the catch-all `EVM-999` |
 
 ## EVMCFG-NNN — ConfigError
 

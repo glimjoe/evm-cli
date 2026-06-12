@@ -8,7 +8,20 @@
 
 set -euo pipefail
 
-SENSITIVE='mnemonic|seed|private[_-]?key|priv[_-]?key|secret'
+# Guard: fail loud (not silently pass) if `rg` is not installed.
+# Per the M3 audit (issue C7), an absent `rg` would otherwise make
+# `rg --quiet` exit 127, the `if` would skip the error branch, and
+# the script would report "All 5 patterns passed" with zero checks
+# actually run. We refuse to run at all without ripgrep.
+if ! command -v rg >/dev/null 2>&1; then
+  echo "ERROR: ripgrep (\`rg\`) is required for ADR-0007 string-on-secret"
+  echo "  audit but was not found on PATH. Install it via:"
+  echo "    cargo install ripgrep"
+  echo "    # or: apt-get install ripgrep / brew install ripgrep"
+  exit 2
+fi
+
+SENSITIVE='mnemonic|seed|private[_-]?key|priv[_-]?key|secret|phrase'
 
 # Pattern 1: direct binding to String
 #   let foo: String = ...

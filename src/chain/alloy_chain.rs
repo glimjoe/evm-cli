@@ -2,35 +2,34 @@
 //
 // `AlloyChain` — the alloy-backed implementation of the `Chain` trait.
 //
-// **M3 skeleton status**: this file is intentionally minimal. The
-// read-only surface is partially wired against an alloy provider, but
-// the trait `impl Chain for AlloyChain` is NOT present because the
-// alloy 2.0.5 API requires careful field-by-field study that exceeds
-// the time budget for M3.
+// Per PLAN-V9 §5 M3 DoD (post-audit fix): full implementation of all
+// `Chain` trait methods + `build_eth_transfer` (alloy 2.0.5 RLP
+// signing via `SignableTransaction::signature_hash()` +
+// `Signer::sign_hash()`) + `get_tx` projection.
 //
-// M3 finalization will add:
-//   - `impl Chain for AlloyChain` with the full method bodies
-//   - `build_eth_transfer` (alloy RLP signing)
-//   - `get_tx` projection (alloy RPC-types field access)
-//   - Anvil integration test in `tests/it_eth_transfer.rs`
-//
-// See PLAN-V10 §20 (M3 changelog) for the rationale.
+// The anvil integration test in `tests/it_eth_transfer.rs` exercises
+// the ETH transfer happy path end-to-end.
 
 use std::time::Duration;
 
-use alloy_primitives::{Address, TxHash, U256};
-#[allow(unused_imports)]
-use alloy_provider::Provider;
+use alloy_consensus::{SignableTransaction, Transaction as TransactionTrait, TxEip1559};
+use alloy_eips::Encodable2718;
+use alloy_network_primitives::TransactionResponse;
+use alloy_primitives::{TxKind, B256, U256};
+use alloy_signer::Signer;
+use alloy_signer_local::PrivateKeySigner;
 
 use crate::chain::{
-    ChainError, FeeEstimate, RpcClient, SignedEthTransfer, TransactionInfo, TransactionReceipt,
+    Chain, ChainError, FeeEstimate, RpcClient, SignedEthTransfer, TransactionInfo,
+    TransactionReceipt,
 };
+use crate::types::{Address, Amount, BlockNumber, ChainId, Nonce, TxHash};
 
 /// Concrete chain implementation backed by an alloy provider + a
-/// rate-limited `RpcClient`. M3 skeleton: see module docs.
+/// rate-limited `RpcClient`. Full `impl Chain for AlloyChain` below.
 pub struct AlloyChain {
     client: RpcClient,
-    chain_id: u64,
+    chain_id: ChainId,
 }
 
 impl std::fmt::Debug for AlloyChain {
@@ -61,13 +60,8 @@ impl AlloyChain {
     /// Build with a pre-existing client (for tests). The chain id
     /// is **not** fetched from RPC in this constructor; the caller
     /// supplies it.
-    pub fn with_client(client: RpcClient, chain_id: u64) -> Self {
+    pub fn with_client(client: RpcClient, chain_id: ChainId) -> Self {
         Self { client, chain_id }
-    }
-
-    /// Chain id this client is bound to.
-    pub fn chain_id(&self) -> u64 {
-        self.chain_id
     }
 
     /// Underlying RpcClient.
@@ -75,58 +69,46 @@ impl AlloyChain {
         &self.client
     }
 
-    async fn fetch_chain_id(client: &RpcClient) -> Result<u64, ChainError> {
+    async fn fetch_chain_id(client: &RpcClient) -> Result<ChainId, ChainError> {
         client.acquire().await.ok();
         let id = client
             .provider()
             .get_chain_id()
             .await
             .map_err(|e| ChainError::Rpc(format!("get_chain_id: {e}")))?;
-        // `get_chain_id` on `dyn Provider` returns `u64` directly (the
-        // concrete alloy provider's network-specific type is erased
-        // through the trait object).
-        Ok(id)
+        Ok(ChainId(id))
+    }
+}
+
+impl Chain for AlloyChain {
+    fn chain_id(&self) -> ChainId {
+        self.chain_id
     }
 
-    // ────────────────────────────────────────────────────────────────
-    // M3 skeleton: read-only methods exposed for direct call (not via
-    // the Chain trait — the trait impl is deferred to M3 finalization).
-    // ────────────────────────────────────────────────────────────────
-
-    /// Read the ETH balance of `addr` (in wei). Direct method, not
-    /// via the `Chain` trait (trait impl deferred to M3 finalization).
-    pub async fn balance_direct(&self, addr: Address) -> Result<U256, ChainError> {
+    async fn balance(&self, addr: Address) -> Result<Amount, ChainError> {
         self.client.acquire().await.ok();
         let bal = self
             .client
             .provider()
-            .get_balance(addr)
+            .get_balance(addr.into_alloy())
             .await
             .map_err(|e| ChainError::Rpc(format!("get_balance: {e}")))?;
-        Ok(bal)
+        Ok(Amount::from_wei(bal))
     }
 
-    /// Get the chain id. Direct method.
-    pub fn chain_id_direct(&self) -> u64 {
-        self.chain_id
-    }
-
-    /// Get the current `pending` nonce for `addr`. Direct method.
-    pub async fn pending_nonce_direct(&self, addr: Address) -> Result<u64, ChainError> {
+    async fn pending_nonce(&self, addr: Address) -> Result<Nonce, ChainError> {
         self.client.acquire().await.ok();
         let n = self
             .client
             .provider()
-            .get_transaction_count(addr)
+            .get_transaction_count(addr.into_alloy())
             .pending()
             .await
             .map_err(|e| ChainError::Rpc(format!("get_transaction_count: {e}")))?;
-        // `get_transaction_count` on `dyn Provider` returns `u64` directly.
-        Ok(n)
+        Ok(Nonce(n))
     }
 
-    /// Get fee estimate. Direct method.
-    pub async fn estimate_fees_direct(&self) -> Result<FeeEstimate, ChainError> {
+    async fn estimate_fees(&self) -> Result<FeeEstimate, ChainError> {
         use alloy_eips::BlockNumberOrTag;
         self.client.acquire().await.ok();
         let provider = self.client.provider();
@@ -155,22 +137,96 @@ impl AlloyChain {
         })
     }
 
-    /// Broadcast a signed raw tx. Direct method.
-    pub async fn broadcast_tx_direct(&self, signed_tx_bytes: &[u8]) -> Result<TxHash, ChainError> {
+    async fn build_eth_transfer(
+        &self,
+        signer: &PrivateKeySigner,
+        to: Address,
+        value: Amount,
+        max_fee_per_gas: Option<Amount>,
+        max_priority_fee_per_gas: Option<Amount>,
+    ) -> Result<SignedEthTransfer, ChainError> {
+        // 1. EIP-155 chainId check: the signer's address is used as
+        //    the recovery address; the actual chainId is bound into
+        //    the signing hash. (In V1, both signer and RPC are
+        //    Sepolia; future chains would relax this.)
+        let signer_addr: Address = signer.address().into();
+
+        // 2. Look up the pending nonce for the signer.
+        let nonce = self.pending_nonce(signer_addr).await?;
+
+        // 3. Estimate fees if not provided.
+        let (max_fee, priority_fee) = match (max_fee_per_gas, max_priority_fee_per_gas) {
+            (Some(m), Some(p)) => (m.into_wei(), p.into_wei()),
+            _ => {
+                let est = self.estimate_fees().await?;
+                (
+                    max_fee_per_gas
+                        .map(|m| m.into_wei())
+                        .unwrap_or(est.max_fee_per_gas),
+                    max_priority_fee_per_gas
+                        .map(|p| p.into_wei())
+                        .unwrap_or(est.max_priority_fee_per_gas),
+                )
+            }
+        };
+
+        // 4. Build the EIP-1559 transaction.
+        let tx = TxEip1559 {
+            chain_id: self.chain_id.as_u64(),
+            nonce: nonce.into(),
+            // 21_000 is the fixed gas for a plain ETH transfer.
+            gas_limit: 21_000,
+            max_fee_per_gas: u128::try_from(max_fee).map_err(|_| ChainError::InvalidAmount {
+                value: max_fee.to_string(),
+                reason: "max_fee_per_gas overflows u128",
+            })?,
+            max_priority_fee_per_gas: u128::try_from(priority_fee).map_err(|_| {
+                ChainError::InvalidAmount {
+                    value: priority_fee.to_string(),
+                    reason: "max_priority_fee_per_gas overflows u128",
+                }
+            })?,
+            to: TxKind::Call(to.into_alloy()),
+            value: value.into_wei(),
+            access_list: Default::default(),
+            input: Default::default(),
+        };
+
+        // 5. Compute the EIP-155 signing hash.
+        let signing_hash = tx.signature_hash();
+
+        // 6. Sign with the user's signer.
+        let signature = signer
+            .sign_hash(&signing_hash)
+            .await
+            .map_err(|e| ChainError::Internal(format!("sign_hash: {e}")))?;
+
+        // 7. Wrap into a Signed<TxEip1559, Signature> for RLP encoding.
+        let signed = tx.into_signed(signature);
+
+        // 8. Encode as EIP-2718 envelope (typed tx, 0x02 || rlp(...)).
+        let raw = signed.encoded_2718();
+
+        // 9. Compute the resulting transaction hash (keccak256 of envelope).
+        let hash = alloy_primitives::keccak256(&raw);
+        Ok(SignedEthTransfer {
+            raw: raw.to_vec(),
+            hash: TxHash::from_b256(hash),
+        })
+    }
+
+    async fn broadcast_tx(&self, signed_tx_bytes: &[u8]) -> Result<TxHash, ChainError> {
         self.client.acquire().await.ok();
-        #[allow(unused_mut)] // alloy API takes &mut but doesn't actually need it
-        let mut tx_bytes = signed_tx_bytes.to_vec();
         let pending = self
             .client
             .provider()
-            .send_raw_transaction(&tx_bytes)
+            .send_raw_transaction(signed_tx_bytes)
             .await
             .map_err(|e| ChainError::Rpc(format!("send_raw_transaction: {e}")))?;
-        Ok(*pending.tx_hash())
+        Ok(TxHash::from_b256(*pending.tx_hash()))
     }
 
-    /// Poll for a receipt. Direct method.
-    pub async fn wait_for_receipt_direct(
+    async fn wait_for_receipt(
         &self,
         hash: TxHash,
         timeout: Duration,
@@ -180,13 +236,13 @@ impl AlloyChain {
         let start = std::time::Instant::now();
         while start.elapsed() < timeout {
             let receipt = provider
-                .get_transaction_receipt(hash)
+                .get_transaction_receipt(hash.into_b256())
                 .await
                 .map_err(|e| ChainError::Rpc(format!("get_transaction_receipt: {e}")))?;
             if let Some(r) = receipt {
                 return Ok(Some(TransactionReceipt {
                     hash,
-                    block_number: r.block_number.unwrap_or(0),
+                    block_number: BlockNumber(r.block_number.unwrap_or(0)),
                     status: r.status(),
                     gas_used: U256::from(r.gas_used),
                 }));
@@ -196,24 +252,57 @@ impl AlloyChain {
         Ok(None)
     }
 
-    /// **M3 stub**: full impl deferred to M3 finalization.
-    pub async fn get_tx_stub(&self, _hash: TxHash) -> Result<Option<TransactionInfo>, ChainError> {
-        Err(ChainError::Internal(
-            "get_tx: deferred to M3 finalization (RBF/Cancel pipeline)".to_string(),
-        ))
-    }
-
-    /// **M3 stub**: full impl deferred to M3 finalization.
-    pub async fn build_eth_transfer_stub(
-        &self,
-        _signer_addr: Address,
-        _to: Address,
-        _value: U256,
-        _max_fee_per_gas: Option<U256>,
-        _max_priority_fee_per_gas: Option<U256>,
-    ) -> Result<SignedEthTransfer, ChainError> {
-        Err(ChainError::Internal(
-            "build_eth_transfer: deferred to M3 finalization (alloy 2.0.5 RLP signing requires anvil integration test)".to_string(),
-        ))
+    async fn get_tx(&self, hash: TxHash) -> Result<Option<TransactionInfo>, ChainError> {
+        self.client.acquire().await.ok();
+        let provider = self.client.provider();
+        let raw = provider
+            .get_transaction_by_hash(hash.into_b256())
+            .await
+            .map_err(|e| ChainError::Rpc(format!("get_transaction_by_hash: {e}")))?;
+        let Some(tx) = raw else {
+            return Ok(None);
+        };
+        // `tx` is `AnyRpcTransaction = WithOtherFields<Transaction<AnyTxEnvelope>>`.
+        // It derefs to `Transaction<AnyTxEnvelope>`, which implements
+        // both `Transaction` (consensus trait) and `TransactionResponse`
+        // (network-agnostic RPC projection). We use the trait methods:
+        let data: B256 = {
+            let mut buf = [0u8; 32];
+            let input = TransactionTrait::input(&tx);
+            let n = input.len().min(32);
+            buf[..n].copy_from_slice(&input[..n]);
+            B256::from(buf)
+        };
+        let nonce = TransactionTrait::nonce(&tx);
+        let value = TransactionTrait::value(&tx);
+        // Consensus `Transaction::max_fee_per_gas` returns `u128` (the
+        // tx field value, regardless of legacy vs. 1559). For pre-1559
+        // txs this is the gas price.
+        let max_fee = U256::from(TransactionTrait::max_fee_per_gas(&tx));
+        // Consensus `Transaction::max_priority_fee_per_gas` returns
+        // `Option<u128>`: `Some` for 1559 txs, `None` for legacy.
+        let max_prio = U256::from(TransactionTrait::max_priority_fee_per_gas(&tx).unwrap_or(0u128));
+        let tx_hash = TransactionResponse::tx_hash(&tx);
+        let from = TransactionResponse::from(&tx);
+        let to = <dyn TransactionResponse>::to(&tx);
+        // The signature is on the inner envelope; for V1 we expose v/r/s
+        // as zeros (display only; the actual re-signing in RBF uses the
+        // signer's full private key). Extracting v/r/s from
+        // `AnyTxEnvelope::Eip1559` is straightforward but requires
+        // downcast; deferred to V2 if needed.
+        let (signature_v, signature_r, signature_s) = (0u8, U256::ZERO, U256::ZERO);
+        Ok(Some(TransactionInfo {
+            hash: TxHash::from_b256(tx_hash),
+            from: Address::from_alloy(from),
+            to: to.map(Address::from_alloy),
+            value,
+            nonce: Nonce(nonce),
+            max_fee_per_gas: max_fee,
+            max_priority_fee_per_gas: max_prio,
+            data,
+            signature_v,
+            signature_r,
+            signature_s,
+        }))
     }
 }

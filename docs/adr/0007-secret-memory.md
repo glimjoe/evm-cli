@@ -182,12 +182,12 @@ All 5 patterns must pass with zero matches. Any failure blocks CI.
 
 ## Implementation
 
-- PLAN-V4 §3 (Type System — `Secret<T>` in `types/`)
-- PLAN-V4 §5 M0 DoD (process hardening sub-items; `clippy.toml` per P0-4)
-- PLAN-V4 §5 M2 DoD (`ZeroizeOnDrop` requirement)
-- PLAN-V4 §7 (self-audit: 4 new memory-hardening checks)
-- PLAN-V4 §8 (private key memory leak risk → HIGH, mitigated)
-- `static_assertions` crate used at compile time to assert `Secret<Vec<u8>>: ZeroizeOnDrop`
+- PLAN-V9 §3 (Type System — `Secret<T>` in `types/`)
+- PLAN-V9 §5 M0 DoD (process hardening sub-items; `clippy.toml` per P0-4)
+- PLAN-V9 §5 M2 DoD (`Zeroize` + explicit `Drop` requirement; see V9 §18 correction)
+- PLAN-V9 §7 (self-audit: 4 new memory-hardening checks)
+- PLAN-V9 §8 (private key memory leak risk → HIGH, mitigated)
+- (removed) The V4-era `static_assertions` crate reference is obsolete post V9 §18 — the `assert_impl_all!(Secret<Vec<u8>>: ZeroizeOnDrop)` assertion was removed when the bound was corrected to `T: Zeroize` + explicit `Drop`. The `static_assertions` dep was dropped from `Cargo.toml` in V9 cleanup.
 
 ## Revisions
 

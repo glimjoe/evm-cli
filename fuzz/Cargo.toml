@@ -1,0 +1,28 @@
+[package]
+name = "evm-cli-fuzz"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+evm-cli = { path = ".." }
+alloy = { version = "=2.0.5", features = ["essentials", "rlp", "signer-local"] }
+alloy-rlp = "=0.3.15"
+alloy-primitives = "=1.6.0"
+alloy-consensus = "=2.0.5"
+alloy-signer-local = "=2.0.5"
+
+[[bin]]
+name = "fuzz_rlp_decode"
+path = "fuzz_targets/fuzz_rlp_decode.rs"
+
+[[bin]]
+name = "fuzz_signature_recover"
+path = "fuzz_targets/fuzz_signature_recover.rs"
+
+[[bin]]
+name = "fuzz_keystore_json"
+path = "fuzz_targets/fuzz_keystore_json.rs"

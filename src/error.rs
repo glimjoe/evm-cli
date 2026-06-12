@@ -11,11 +11,22 @@
 
 use thiserror::Error;
 
-// Per-layer enums are defined inline in this file (not as submodules)
-// to keep the M0 file count low. M1+ may split them out per ADR-0003
-// rev1 once each layer has substantive code.
+// Per-layer enums live next to the code that produces them:
+//   - `ChainError`  → `crate::chain::ChainError`    (M3, real)
+//   - `KeystoreError` → `crate::keystore::KeystoreError` (M2, real)
+//   - `CryptoError`  → `crate::error::crypto::CryptoError` (M1+, placeholder)
+//   - `ConfigError`  → `crate::error::config::ConfigError` (M4+, placeholder)
+//   - `IoError`      → `crate::error::io::IoError` (M4+, placeholder)
+//
+// `CodeSource` impls live next to the enum that owns the variants
+// (see `src/keystore/mod.rs` and `src/chain/mod.rs`). The M2 review
+// and the M3 audit both found that placeholder enums here caused a
+// type-collision bug — the downcast chain wired to the placeholder
+// never matched the real enum, so all errors fell through to EVM-999.
+// M3 audit B1 fixed this for `ChainError` (removed placeholder;
+// added `impl CodeSource` in `src/chain/mod.rs`).
 
-use crate::error::chain::ChainError;
+use crate::chain::ChainError;
 use crate::error::config::ConfigError;
 use crate::error::crypto::CryptoError;
 use crate::error::io::IoError;
@@ -158,57 +169,13 @@ pub mod crypto {
     }
 }
 
-// `KeystoreError` lives in `crate::keystore` (the real M2 enum).
-// Per ADR-0006 rev1 + M2 review, the placeholder that previously lived
-// here was removed to avoid the "two `KeystoreError` types" type
-// collision that broke the downcast chain. `CodeSource` is now
-// implemented in `src/keystore/mod.rs` next to the enum itself.
-
-pub mod chain {
-    use std::path::PathBuf;
-
-    use super::{CodeSource, Error};
-
-    /// Sub-enum for `EVMC-001 RpcError` variants. Defined here at M0
-    /// so M3 (which adds RpcError) can attach it.
-    #[derive(Debug, Error)]
-    pub enum RpcErrorKind {
-        #[error("rpc timeout after {0:?}")]
-        Timeout(std::time::Duration),
-        #[error("rpc connection refused")]
-        ConnectionRefused,
-        #[error("rpc http status {0}: {1}")]
-        HttpStatus(u16, String),
-        #[error("rpc rate-limited; retry_after={retry_after:?}")]
-        RateLimited {
-            retry_after: Option<std::time::Duration>,
-        },
-        #[error("rpc server error {0}: {1}")]
-        ServerError(i64, String),
-        #[error("rpc response deserialization failed: {0}")]
-        Deserialization(String),
-    }
-
-    #[derive(Debug, Error)]
-    pub enum ChainError {
-        #[error("rpc error")]
-        RpcError { kind: RpcErrorKind },
-        // M0 placeholder for the rest. M3 adds EVMC-002..010.
-
-        // Suppress unused-warnings for fields used only in the placeholder.
-        #[error("placeholder (M0)")]
-        _M0PlaceholderPath(PathBuf),
-    }
-
-    impl CodeSource for ChainError {
-        fn code(&self) -> &'static str {
-            match self {
-                Self::RpcError { .. } => "EVMC-001",
-                Self::_M0PlaceholderPath(_) => "EVM-999",
-            }
-        }
-    }
-}
+// `KeystoreError` and `ChainError` live in `crate::keystore` and
+// `crate::chain` (the real M2/M3 enums). Per ADR-0006 rev1 + the M2
+// review's fix + the M3 audit B1, the placeholders that previously
+// lived here were removed to avoid the "two `<EnumName>` types" type
+// collision that broke the downcast chain. `CodeSource` is implemented
+// in `src/keystore/mod.rs` and `src/chain/mod.rs` next to the enum
+// itself.
 
 pub mod config {
     use super::{CodeSource, Error};
@@ -251,9 +218,7 @@ mod tests {
 
     #[test]
     fn downcast_yields_code_for_chain_rpc_error() {
-        let err = CliError::from_layer(ChainError::RpcError {
-            kind: chain::RpcErrorKind::ConnectionRefused,
-        });
+        let err = CliError::from_layer(ChainError::Rpc("connection refused".to_string()));
         assert_eq!(err.code(), "EVMC-001");
     }
 
@@ -271,9 +236,7 @@ mod tests {
 
     #[test]
     fn display_includes_code() {
-        let err = CliError::from_layer(ChainError::RpcError {
-            kind: chain::RpcErrorKind::ConnectionRefused,
-        });
+        let err = CliError::from_layer(ChainError::Rpc("connection refused".to_string()));
         let s = format!("{err}");
         assert!(s.contains("EVMC-001"), "display missing code: {s}");
     }
@@ -311,6 +274,94 @@ mod tests {
         }
     }
 
+    /// P0-1 regression (M3 audit B1): the downcast chain must find
+    /// `crate::chain::ChainError` (the real enum, not a placeholder),
+    /// and every variant must produce its ASSIGNED EVMC-NNN code. This
+    /// is the consumer-facing contract for `--json` output (M4).
+    /// Without this test, a future refactor that re-introduces a
+    /// placeholder `pub mod chain` would silently break all chain
+    /// error codes (they'd fall through to `EVM-999`).
+    #[test]
+    fn downcast_yields_chain_codes() {
+        use crate::types::{Address, BlockNumber, TxHash};
+        use alloy_primitives::U256;
+        use std::time::Duration;
+
+        let cases: Vec<(crate::chain::ChainError, &'static str)> = vec![
+            (ChainError::Rpc("x".into()), "EVMC-001"),
+            (
+                ChainError::NonceStuck {
+                    addr: Address::ZERO,
+                    stuck_for: Duration::from_secs(1),
+                },
+                "EVMC-002",
+            ),
+            (
+                ChainError::FeeUnderpriced {
+                    required: U256::from(1u64),
+                    offered: U256::from(0u64),
+                },
+                "EVMC-003",
+            ),
+            (
+                ChainError::InvalidAmount {
+                    value: "abc".into(),
+                    reason: "not a number",
+                },
+                "EVMC-004",
+            ),
+            (
+                ChainError::InvalidChainId {
+                    expected: 1,
+                    actual: 99,
+                },
+                "EVMC-005",
+            ),
+            (
+                ChainError::TxReverted {
+                    hash: TxHash::ZERO,
+                    reason: "reverted".into(),
+                },
+                "EVMC-006",
+            ),
+            (ChainError::TxNotFound { hash: TxHash::ZERO }, "EVMC-007"),
+            (
+                ChainError::TxAlreadyMined {
+                    hash: TxHash::ZERO,
+                    block: BlockNumber(1),
+                },
+                "EVMC-008",
+            ),
+            (
+                ChainError::InsufficientFunds {
+                    required: U256::from(1u64),
+                    available: U256::ZERO,
+                },
+                "EVMC-009",
+            ),
+            (
+                ChainError::GasEstimationFailed {
+                    reason: "out of gas".into(),
+                },
+                "EVMC-010",
+            ),
+            (
+                ChainError::ReceiptTimeout(Duration::from_secs(120)),
+                "EVMC-099",
+            ),
+            (ChainError::Internal("x".into()), "EVM-999"),
+        ];
+        for (err, expected) in cases {
+            let cli = CliError::from_layer(err);
+            assert_eq!(
+                cli.code(),
+                expected,
+                "downcast mismatch: expected {expected}, got {}",
+                cli.code()
+            );
+        }
+    }
+
     /// CI enforcement per ADR-0006 rev1: every `code()` match arm
     /// across all layer enums must return a string that appears in
     /// `docs/code_allocation.md`. This guards against code drift
@@ -319,8 +370,10 @@ mod tests {
     fn all_codes_are_documented_in_code_allocation() {
         let alloc = include_str!("../docs/code_allocation.md");
         let claimed: &[&str] = &[
-            // ChainError
-            "EVMC-001", // KeystoreError (real, in crate::keystore)
+            // ChainError (real, in crate::chain)
+            "EVMC-001", "EVMC-002", "EVMC-003", "EVMC-004", "EVMC-005", "EVMC-006", "EVMC-007",
+            "EVMC-008", "EVMC-009", "EVMC-010", "EVMC-099",
+            // KeystoreError (real, in crate::keystore)
             "EVMK-001", "EVMK-002", "EVMK-009", "EVMK-010", "EVMK-011", "EVMK-012",
         ];
         for code in claimed {

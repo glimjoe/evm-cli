@@ -1,20 +1,32 @@
 // SPDX-License-Identifier: MIT
 //
 // Integration test: panic hook does not leak secret material or
-// panic location (ADR-0005 verification, V8 §11 step 12).
+// panic location (ADR-0005 verification, PLAN-V9 §11 step 12).
 //
-// Strategy: spawn the binary with a hidden `--trigger-panic-for-test`
-// flag (gated by an env var so it cannot be triggered in production
-// builds). The panic payload contains a recognizable private key
-// (BIP-39 mnemonic phrase as a stress test). Capture stderr and assert:
-//   1. No 64-char hex string (private key length).
-//   2. No BIP-39 word ("abandon", "abandon", ...).
-//   3. The human-panic friendly message is present.
-//   4. The exit code matches SIGABRT (Linux) or our abort behavior.
+// Strategy: spawn the **release** binary with the
+// `EVMC_TEST_TRIGGER_PANIC=1` env var (gated in
+// `src/main.rs::trigger_test_panic` so it cannot fire in
+// production). The panic payload contains a recognizable fake
+// private key + BIP-39 mnemonic; capture stderr and assert:
+//   1. The fake private key is NOT in stderr.
+//   2. The fake mnemonic is NOT in stderr.
+//   3. The default panic location line ("panicked at <file>:<line>")
+//      is NOT in stderr (human-panic replaces the default hook).
+//   4. The binary exits with non-zero (panic abort).
+//
+// **Why release and not dev:** human-panic 2.0.8's `setup_panic!()`
+// is a no-op under `cfg(debug_assertions)` (this is by design — the
+// crate is intended for shipping binaries). The test therefore runs
+// against the release binary, building it on-demand if missing.
+//
+// M3 audit C8: this test was previously a documented placeholder. It
+// is now a real test (the panic trigger is wired in `src/main.rs`).
+// The dev profile deviance is now self-documented above.
 
 #![allow(unused_crate_dependencies)] // assert_cmd is in dev-deps
 #![allow(clippy::disallowed_methods)] // String::from_utf8_lossy is OK in test code (inspecting captured output)
 
+use std::path::PathBuf;
 use std::process::Command;
 
 const EVMC_TEST_TRIGGER: &str = "EVMC_TEST_TRIGGER_PANIC";
@@ -23,67 +35,97 @@ const FAKE_PRIVATE_KEY_HEX: &str =
 const FAKE_MNEMONIC: &str =
     "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
 
+/// Locate (and build on demand) the **release** binary. We use the
+/// release profile because human-panic 2.0.8's `setup_panic!()` is a
+/// no-op under `cfg(debug_assertions)`.
+fn release_bin() -> PathBuf {
+    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    // `cargo build --release` outputs to `<workspace_root>/target/release/`
+    // (or `target/release/` when the crate itself is the workspace root,
+    // which is our case). The CLI binary name is `evm-cli`.
+    let target_dir = manifest_dir.join("target").join("release").join("evm-cli");
+    if !target_dir.exists() {
+        eprintln!("release binary not found; building (this may take a moment)...");
+        let status = Command::new("cargo")
+            .args(["build", "--release", "--bin", "evm-cli"])
+            .current_dir(&manifest_dir)
+            .env("RUST_BACKTRACE", "0")
+            .status()
+            .expect("spawn cargo build --release");
+        assert!(
+            status.success(),
+            "cargo build --release failed (status {status:?})"
+        );
+    }
+    target_dir
+}
+
 #[test]
 fn panic_hook_does_not_leak_secret_in_stderr() {
-    // Skip if assert_cmd cannot find the binary (e.g. test runs before build).
-    let bin = assert_cmd::cargo::cargo_bin!("evm-cli");
+    let bin = release_bin();
     if !bin.exists() {
-        eprintln!("binary not built; skipping panic-hook integration test");
-        return;
+        panic!(
+            "release binary not found at {} even after build attempt",
+            bin.display()
+        );
     }
 
-    // M0 note: the panic-trigger flag is not yet wired into main.rs.
-    // When M0 wires it (gated by the env var below), this test will
-    // exercise the path. Until then this test is a documented
-    // placeholder that exists so the integration test directory is
-    // created at M0 kickoff.
-    let output = Command::new(bin)
+    // Critical: human-panic 2.0.8's `PanicStyle::default()` checks
+    // `RUST_BACKTRACE`: if the var is set to ANY value (including "0",
+    // which is what CI sets globally per ADR-0005), human-panic falls
+    // back to `PanicStyle::Debug` (no-op, default hook remains). The
+    // test must explicitly REMOVE the var so human-panic fires.
+    let output = Command::new(&bin)
         .env(EVMC_TEST_TRIGGER, "1")
-        .env("RUST_BACKTRACE", "0")
+        .env_remove("RUST_BACKTRACE")
+        .env_remove("CI")
         .output();
 
     let output = match output {
         Ok(o) => o,
         Err(e) => {
-            eprintln!("could not execute binary: {e}; skipping");
-            return;
+            panic!("could not execute binary {}: {e}", bin.display());
         }
     };
 
+    // Panic must produce a non-zero exit code.
+    assert!(
+        !output.status.success(),
+        "expected panic to produce non-zero exit; got {:?}",
+        output.status
+    );
+
     let stderr = String::from_utf8_lossy(&output.stderr);
 
-    // If the trigger flag isn't wired yet, stderr is just the M0 banner
-    // and the assertions are vacuously true. Once M0 wires the flag,
-    // these assertions will be live.
-    if !stderr.contains("internal error") && !stderr.contains("M0 scaffolding") {
-        // Neither human-panic message nor M0 banner: skip.
-        eprintln!("neither human-panic message nor M0 banner present; skipping assertions");
-        return;
-    }
-
-    if stderr.contains("M0 scaffolding") {
-        // M0 trigger not yet wired; this is the placeholder path.
-        eprintln!("M0 trigger not yet wired; test will become live in M0 finalization");
-        return;
-    }
-
-    // human-panic path: assert no leak.
+    // (1) No leak: secret material must not appear in stderr.
     assert!(
         !stderr.contains(FAKE_PRIVATE_KEY_HEX),
-        "stderr leaked private key: {}",
-        &stderr[..stderr.len().min(200)]
+        "stderr leaked fake private key: {:?}",
+        &stderr[..stderr.len().min(400)]
     );
     assert!(
         !stderr.contains(FAKE_MNEMONIC),
-        "stderr leaked BIP-39 mnemonic"
+        "stderr leaked fake BIP-39 mnemonic: {:?}",
+        &stderr[..stderr.len().min(400)]
     );
-    // The panic message from human-panic typically includes
-    // "internal error" or "report this" or a URL pointing to the repo.
+
+    // (2) The default panic-location line must NOT appear
+    // (human-panic replaces the default hook).
+    assert!(
+        !stderr.contains("panicked at"),
+        "default panic location leaked; human-panic hook not active: {:?}",
+        &stderr[..stderr.len().min(400)]
+    );
+
+    // (3) A human-panic friendly message is present.
     assert!(
         stderr.contains("internal error")
             || stderr.contains("report this")
-            || stderr.contains("panicked"),
-        "expected human-panic message, got: {}",
+            || stderr.contains("panicked")
+            || stderr.contains("Oops")
+            || stderr.contains("embarrassing")
+            || stderr.contains("had a problem"),
+        "expected human-panic friendly message; got: {:?}",
         &stderr[..stderr.len().min(400)]
     );
 }

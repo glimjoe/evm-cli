@@ -28,7 +28,10 @@ libc = "=0.2.186"  # kept compatible with nix 0.31.3
 # Secret memory (ADR-0007)
 zeroize = { version = "=1.8.2", features = ["zeroize_derive"] }
 os-memlock = "=0.2.0"  # mlock(2) wrapper; ADR-0007's ≥32B threshold
-static_assertions = "=1.1.0"
+# static_assertions removed in PLAN-V9 §18: the original `assert_impl_all!
+# (Secret<Vec<u8>>: ZeroizeOnDrop)` is no longer applicable because the
+# V9 §18 correction changed the bound to `T: Zeroize` + explicit `Drop`
+# (see `src/types/secret.rs`).
 
 # Error system (ADR-0006)
 anyhow = "=1.0.102"
@@ -43,10 +46,11 @@ tracing-subscriber = { version = "=0.3.22", features = ["env-filter", "fmt"] }
 # Crypto/Chain/CLI phases). Allowed unused at M0 to keep the spec
 # consistent with V8 step 4.
 # ────────────────────────────────────────────────────────────────────
-alloy                   = { version = "=2.0.5", features = ["essentials", "signer-local", "provider-http", "rpc-types", "node-bindings"] }
+alloy                   = { version = "=2.0.5", features = ["essentials", "signer-local", "provider-http", "rpc-types"] }
 alloy-provider          = "=2.0.5"
 alloy-transport-http     = "=2.0.5"
 alloy-network           = "=2.0.5"
+alloy-network-primitives = "=2.0.5"
 alloy-eips               = "=2.0.5"
 alloy-consensus         = "=2.0.5"
 alloy-rlp               = "=0.3.15"
@@ -69,18 +73,21 @@ tiny-keccak             = { version = "=2.0.2", features = ["keccak"] }
 # explicitly here so we can use `coins_bip39::Mnemonic` directly in
 # src/crypto/mnemonic.rs)
 coins-bip39             = "=0.12.0"
+# M1: hex encoding used by doctest in src/crypto/keccak.rs:28
+hex                     = { version = "=0.4.3", default-features = false }
 # M1: thread_rng() for mnemonic generation
 rand                    = "=0.8.5"
 # M1: async runtime for async signer APIs (Signer::sign_message is async)
 tokio                   = { version = "=1.46.1", features = ["rt", "macros", "time"] }
-# M2: standard Ethereum keystore format (deviation from V8 §5 M2 spec
-# which specified Argon2id + AES-256-GCM; rationale: user chose
-# interoperability with geth/ethers.js etc. — see V10 §19 changelog)
+# M2: standard Ethereum keystore format (deviation from PLAN-V9 §5 M2
+# spec which specified Argon2id + AES-256-GCM; rationale: user chose
+# interoperability with geth/ethers.js etc. — see ADR-0009)
 eth-keystore            = "=0.5.0"
 # M2: JSON for AliasIndex serialization
 serde_json              = "=1.0.150"
-# M2: atomic write staging (ADR-0007 rev1: ZeroizingTempFile; the standard
-# tempfile crate provides RAII cleanup; our wrapper zeroizes on drop)
+# M2: `tempfile` for the test fixture (dev/test only; production
+# keystore write goes through `eth-keystore`'s direct `File::create`,
+# which is atomic enough for V1 — see M2-REVIEW §A.7).
 tempfile                = "=3.27.0"
 # M3: rate limiter (governor) for the RPC client. Default quota is
 # per-second, configurable; the V8 §5 M3 spec asks for 25 req/s
@@ -93,6 +100,11 @@ url                     = "=2.5.0"
 assert_cmd = "=2.1.1"  # ADR-0005: tests/it_panic_hook.rs
 # M1: property-based testing for personal_sign variants + EIP-55 checksums
 proptest = "=1.11.0"
+# M3: anvil integration test support (M3 DoD: tests/it_eth_transfer.rs)
+alloy-node-bindings     = "=2.0.5"
+# M3: pick a test port deterministically; anvil can run multiple instances
+# in CI; tests/it_eth_transfer.rs spawns anvil per-test (D19).
+# (No new dep needed; tempfile is already in [dependencies].)
 
 [profile.release]
 opt-level = 3

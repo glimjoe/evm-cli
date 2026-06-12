@@ -1,10 +1,14 @@
-# deny.toml — cargo-deny configuration per V8 §5 M0 DoD
+# deny.toml — cargo-deny configuration per PLAN-V9 §5 M0 DoD
 # Bans: GPL-licensed deps, wildcard versions, unmaintained crates.
 
 [advisories]
 db-path = "~/.cargo/advisory-db"
 db-urls = ["https://github.com/rustsec/advisory-db"]
 yanked = "warn"
+# Per PLAN-V9 §5 M0 DoD: "deny.toml forbids GPL, wildcard versions,
+# unmaintained crates." The `unmaintained = "deny"` line below makes
+# the RUSTSEC `unmaintained` advisory category block the build.
+unmaintained = "deny"
 ignore = []
 
 [licenses]
@@ -19,7 +23,6 @@ allow = [
     "Unicode-DFS-2016",
     "Unicode-3.0",
     "Zlib",
-    "OpenSSL",  # transitively via reqwest/rustls; review if changed
 ]
 confidence-threshold = 0.8
 
@@ -30,8 +33,9 @@ highlight = "all"
 allow = []
 deny = []
 
-# Block crates that have been deprecated or whose maintainers have
-# explicitly handed off. This list is checked against RUSTSEC advisories.
+# Note: PLAN-V9 §7 "Dependencies" also requires RUSTSEC unmaintained
+# advisories to fail the build. Enforced via the [advisories] section
+# above (unmaintained = "deny").
 
 [sources]
 unknown-registry = "deny"

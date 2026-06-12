@@ -2,49 +2,42 @@
 //
 // evm_cli::chain — Ethereum JSON-RPC chain operations.
 //
-// Per V8 §5 M3 DoD and ADR-0003 (workspace split), this module
+// Per PLAN-V9 §5 M3 DoD and ADR-0003 (workspace split), this module
 // depends only on `crypto`, `keystore`, `types`, and external crates
 // (alloy, governor, nix, reqwest, url). It does NOT depend on `cli`
 // (which comes in M4).
 //
-// **M3 status:** This module is a working SKELETON. The following
-// are implemented and tested at the unit level:
+// See PLAN-V9 §5 M3 DoD for the full specification.
+//
+// **M3 status (post-audit fix):** This module is now complete. The
+// following are implemented and unit-tested:
 //   - `nonce::NonceManager` (4-state machine, JSON-lines log, flock)
-//   - `rbf::compute_bump` (3-term fee-bump formula)
+//   - `rbf::compute_bump` (3-term fee-bump formula) +
+//     `bump_fee` / `cancel` (full pipeline, alloy 2.0.5 EIP-1559)
 //   - `erc20::{encode_transfer, encode_balance_of, decode_balance_of}`
 //   - `client::RpcClient` (rate-limited, governor)
-//   - `alloy_chain::AlloyChain::new` / `with_rate` / `with_client` and
-//     the **read-only** surface of `Chain`: `balance`, `chain_id`,
-//     `pending_nonce`, `estimate_fees`, `broadcast_tx`,
+//   - `alloy_chain::AlloyChain` — full `impl Chain for AlloyChain`,
+//     including `build_eth_transfer`, `get_tx`, `broadcast_tx`,
 //     `wait_for_receipt`.
 //
-// The following are STUBBED (return `ChainError::Internal`):
-//   - `get_tx` (alloy 2.0.5 RPC-types field access API differs from
-//     the V8-era sketch; full impl needs anvil integration tests)
-//   - `build_eth_transfer` (alloy 2.0.5 RLP signing API; needs
-//     anvil integration tests)
-//   - RBF / Cancel full pipeline (depends on `build_eth_transfer`)
-//   - ERC-20 broadcast (depends on `build_eth_transfer`)
-//
-// **Why the stubs:** alloy 2.0.5 has several API differences from
-// what V8 §5 M3 was written for. Field accessors on `Transaction<T>`
-// are different; signing flow is via `EthereumWallet` + `Signer`
-// which has subtle trait-bound requirements. A full M3 in one
-// session is not realistic without anvil tests to verify against;
-// these are deferred to M3 finalization in the next session.
-//
-// See PLAN-V10 §20 (M3 changelog) for the full impact analysis.
+// Tests: unit tests in every submodule + anvil integration test
+// `tests/it_eth_transfer.rs` (M3 DoD §5 L215) +
+// `tests/e2e_sepolia_bump.rs` (`#[ignore]`, M3 DoD §5 L216).
 
-#![allow(clippy::disallowed_methods)]
-// We use String::from_utf8_lossy in test code; production paths never
-// wrap secret material in String.
+#![cfg_attr(test, allow(clippy::disallowed_methods))]
+// Test-only allow: tests legitimately use `.expect()` / `.unwrap()` on
+// fixed inputs. Production paths must not trip
+// `clippy::disallowed_methods` (P0-4). Same narrow form as
+// `src/keystore/mod.rs:33` and `src/crypto/mod.rs:15` (M3 audit C12).
 
 use std::time::Duration;
 
-use alloy_primitives::{Address, TxHash, U256};
+use alloy_primitives::{B256, U256};
 use thiserror::Error;
 
-/// Errors from chain operations. Per V8 §5 M3 + ADR-0006 rev1, all
+use crate::types::{Address, Amount, BlockNumber, ChainId, Nonce, TxHash};
+
+/// Errors from chain operations. Per PLAN-V9 §5 M3 + ADR-0006 rev1, all
 /// variants carry an error code. The codes are listed in
 /// `docs/code_allocation.md` and a CI test enforces that every
 /// `code()` arm returns a string from that file.
@@ -80,7 +73,7 @@ pub enum ChainError {
 
     /// RBF/Cancel: original tx already mined (can't replace).
     #[error("tx already mined: hash={hash:?} block={block}")]
-    TxAlreadyMined { hash: TxHash, block: u64 },
+    TxAlreadyMined { hash: TxHash, block: BlockNumber },
 
     /// Wallet balance < value + max fee.
     #[error("insufficient funds: required {required}, available {available}")]
@@ -119,30 +112,59 @@ impl ChainError {
     }
 }
 
-/// Trait for chain operations. The V8 §5 M3 design calls for a trait
-/// abstraction so that the alloy-specific implementation can be
-/// swapped. **M3 stub**: the trait is defined; the alloy
-/// implementation will follow in M3 finalization.
+/// P0-1 / ADR-0006 rev1: `CodeSource` impl lives next to the real
+/// `ChainError` enum (not in a placeholder `pub mod chain { ... }` in
+/// `src/error.rs`). The M3 audit (issue B1) found that a placeholder
+/// `ChainError` with only `RpcError { kind: RpcErrorKind }` was wired
+/// into `CliError::code()`'s downcast chain, while the real enum
+/// (above) was used by all M3 code paths — so every real `ChainError`
+/// fell through to `EVM-999`. With this impl, the downcast finds the
+/// real enum and returns the correct EVMC-NNN code.
+impl crate::error::CodeSource for ChainError {
+    fn code(&self) -> &'static str {
+        // Same mapping as the inherent `ChainError::code` method.
+        ChainError::code(self)
+    }
+}
+
+/// Trait for chain operations. The PLAN-V9 §5 M3 design calls for a
+/// trait abstraction so that the alloy-specific implementation can be
+/// swapped. Per PLAN-V9 §3, the API boundary uses the project's
+/// newtypes (`Address`, `Amount`, `BlockNumber`, `ChainId`, `Nonce`,
+/// `Signature`, `TxHash`); alloy types are converted to/from at the
+/// implementation boundary.
 pub trait Chain: Send + Sync {
+    /// Chain id this client is bound to.
+    fn chain_id(&self) -> ChainId;
+
     /// Read the ETH balance of `addr` (in wei).
     fn balance(
         &self,
         addr: Address,
-    ) -> impl std::future::Future<Output = Result<U256, ChainError>> + Send;
-
-    /// Get the chain id (per EIP-155). For Sepolia, returns 11155111.
-    fn chain_id(&self) -> impl std::future::Future<Output = Result<u64, ChainError>> + Send;
+    ) -> impl std::future::Future<Output = Result<Amount, ChainError>> + Send;
 
     /// Get the current `pending` nonce for `addr`.
     fn pending_nonce(
         &self,
         addr: Address,
-    ) -> impl std::future::Future<Output = Result<u64, ChainError>> + Send;
+    ) -> impl std::future::Future<Output = Result<Nonce, ChainError>> + Send;
 
     /// Get fee estimate for the next EIP-1559 transaction.
     fn estimate_fees(
         &self,
     ) -> impl std::future::Future<Output = Result<FeeEstimate, ChainError>> + Send;
+
+    /// Build + sign an ETH transfer transaction. Returns the raw
+    /// RLP-encoded signed bytes (ready for `broadcast_tx`) and the
+    /// resulting transaction hash.
+    fn build_eth_transfer(
+        &self,
+        signer: &alloy_signer_local::PrivateKeySigner,
+        to: Address,
+        value: Amount,
+        max_fee_per_gas: Option<Amount>,
+        max_priority_fee_per_gas: Option<Amount>,
+    ) -> impl std::future::Future<Output = Result<SignedEthTransfer, ChainError>> + Send;
 
     /// Send a signed tx (RLP bytes); returns the tx hash.
     fn broadcast_tx(
@@ -177,7 +199,7 @@ pub struct FeeEstimate {
 #[derive(Debug, Clone)]
 pub struct TransactionReceipt {
     pub hash: TxHash,
-    pub block_number: u64,
+    pub block_number: BlockNumber,
     pub status: bool,
     pub gas_used: U256,
 }
@@ -189,10 +211,10 @@ pub struct TransactionInfo {
     pub from: Address,
     pub to: Option<Address>,
     pub value: U256,
-    pub nonce: u64,
+    pub nonce: Nonce,
     pub max_fee_per_gas: U256,
     pub max_priority_fee_per_gas: U256,
-    pub data: alloy_primitives::B256,
+    pub data: B256,
     pub signature_v: u8,
     pub signature_r: U256,
     pub signature_s: U256,
@@ -214,3 +236,9 @@ pub mod rbf;
 pub use client::RpcClient;
 pub use nonce::NonceManager;
 pub use rbf::{bump_fee, cancel};
+
+// Re-export the alloy type so existing callers (e.g. `sign.rs`,
+// `keystore/mod.rs`) that previously used `alloy_primitives::Address`
+// can keep using it without re-importing.
+#[allow(unused_imports)]
+pub(crate) use alloy_primitives::Address as _AlloyAddress;

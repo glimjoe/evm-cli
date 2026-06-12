@@ -77,7 +77,7 @@ Codes marked `ASSIGNED` are required by V1; `RESERVED` are reserved for future v
 
 | Code | Status | Variant | Notes |
 |---|---|---|---|
-| EVMC-001 | ASSIGNED | `RpcError { kind: RpcErrorKind }` | See RpcErrorKind sub-enum below |
+| EVMC-001 | ASSIGNED | `Rpc(String)` | Underlying RPC failure (timeout, 429, server error, deserialization). The string is a free-form description (e.g. `"get_balance: connection refused"`). **rev2 simplification**: the structured `RpcErrorKind` sub-enum from the rev1 draft was collapsed into a single `String` payload to keep the public surface minimal (per the M3 audit fix for B1). Sub-categorization is preserved in the string content (`"get_balance: ..."`, `"send_raw_transaction: ..."`) for log filtering. |
 | EVMC-002 | ASSIGNED | `NonceStuck { addr, stuck_for: Duration }` | NonceManager reports timeout |
 | EVMC-003 | ASSIGNED | `FeeUnderpriced { required, offered }` | RPC rejected for fee |
 | EVMC-004 | ASSIGNED | `InvalidAmount { value: String, reason: &'static str }` | U256 parse / overflow (P0-4) |
@@ -87,15 +87,8 @@ Codes marked `ASSIGNED` are required by V1; `RESERVED` are reserved for future v
 | EVMC-008 | ASSIGNED | `TxAlreadyMined { hash, block }` | RBF / Cancel: already in a block *(added per ADR-0008 rev1)* |
 | EVMC-009 | ASSIGNED | `InsufficientFunds { required, available }` | Balance < value + fee |
 | EVMC-010 | ASSIGNED | `GasEstimationFailed { reason: String }` | `eth_estimateGas` revert / timeout |
-| EVMC-099 | RESERVED | (future) | |
-
-`RpcErrorKind` sub-enum (all under EVMC-001):
-- `Timeout(Duration)` — HTTP timeout
-- `ConnectionRefused` — RPC unreachable
-- `HttpStatus(u16, String)` — non-200 HTTP
-- `RateLimited { retry_after: Option<Duration> }` — 429
-- `ServerError(i64, String)` — JSON-RPC error code + message
-- `Deserialization(String)` — response body parse fail
+| EVMC-099 | ASSIGNED | `ReceiptTimeout(Duration)` | 120s receipt polling timed out (M3 receipt pipeline). 099 was previously RESERVED; promoted to ASSIGNED in rev2. |
+| (catch-all) | — | `Internal(String)` | Other internal error (signing, internal invariant). Surfaces as `EVM-999` via the downcast-chain catch-all; not a `ChainError::code()` arm itself. |
 
 **`EVMCFG-NNN` — ConfigError**
 
@@ -187,6 +180,16 @@ G3 review by maintainer identified 4 issues in the initial Accepted draft. All a
 4. **CliError delegation was muddled**: the initial draft said "CliError delegates to its inner variant" but V4's `CliError` is `anyhow`-based, not an enum. Now explicit: `CliError` is a wrapper struct holding `anyhow::Error`, and `code()` is a linear downcast chain. The order of downcasts is part of the API contract.
 
 The total ASSIGNED count is 31 codes (4 EVMCR + 8 EVMK + 10 EVMC + 4 EVMCFG + 4 EVMIO + 1 catch-all). The 999-per-layer headroom is comfortable for V2 additions.
+
+### 2026-06-11 (revision 2)
+
+M3 audit fix for B1 surfaced two corrections to the rev1 spec:
+
+1. **`RpcError { kind: RpcErrorKind }` collapsed to `Rpc(String)`**: the rev1 sub-enum (`Timeout`, `ConnectionRefused`, `HttpStatus`, `RateLimited`, `ServerError`, `Deserialization`) was a speculative design that the M3 implementation simplified to a single `String` payload. The downcast-chain code regression test (`downcast_yields_chain_codes` in `src/error.rs:285-363`) now matches this simpler shape. ADR-0006 rev2 (this revision) removes the `RpcErrorKind` sub-enum description and the "10 EVMC (+ 6 RpcErrorKind sub-variants)" wording from the rev1 changelog. The total ASSIGNED count is unchanged.
+
+2. **`EVMC-099` promoted from RESERVED to ASSIGNED**: the M3 receipt-polling timeout (`ChainError::ReceiptTimeout(Duration)`) lands in code EVMC-099 (was previously earmarked for "future use"). 099 was chosen to leave EVMC-011..098 free for V2 additions; the rev1 "10 EVMC" count is now 11 with EVMC-099.
+
+**Stability impact:** EVMC-001 already has the string payload ("RpcError" or "Rpc" both map to EVMC-001 in `code()`); no scripts depending on the variant name were affected. The variant rename (`RpcError` → `Rpc`) is internal and not yet exposed via the `--json` flag (M4 is when it becomes user-visible).
 
 ## References
 

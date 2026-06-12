@@ -35,9 +35,25 @@ cargo install --git https://github.com/<org>/evm-cli
 
 This is a **proof-of-concept** intended for the Sepolia testnet. Do not use it on mainnet with assets of real value. The codebase has not been audited by a third party. See [SECURITY.md](./SECURITY.md) for the vulnerability disclosure process.
 
+### Known V1 security limitations
+
+Per [ADR-0009](./docs/adr/0009-eth-keystore-deviation.md):
+
+- **KDF cost**: scrypt at N=2¹³ (8192) is **16× below** the OWASP 2024
+  baseline of N=2¹⁷. A determined attacker with the keystore file and
+  modern hardware can attempt ~10 passwords/sec against the V1
+  parameters, vs. <1/sec against Argon2id m=65536. V2 should bump to
+  N=2¹⁷ or migrate to Argon2id.
+- **Cipher**: AES-128-CTR + Keccak-256 MAC (encrypt-then-MAC), not
+  AES-256-GCM AEAD. This is the standard Ethereum keystore format
+  (EIP-1081) used by `geth` and is verified on every decrypt.
+
+Both limitations are accepted for V1 and recorded in ADR-0009 with
+the rationale and V2 follow-up.
+
 ## Documentation
 
-- [PLAN-V8.md](./PLAN-V8.md) — implementation plan
+- [PLAN-V9.md](../PLAN-V9.md) — implementation plan
 - [docs/adr/](./docs/adr/) — Architecture Decision Records
 - [docs/code_allocation.md](./docs/code_allocation.md) — error code registry
 

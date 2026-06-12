@@ -73,12 +73,16 @@ jobs:
         run: cargo install --locked cargo-fuzz
       - name: Fuzz 5 minutes per harness
         run: |
-          # M3 deliverable: fuzz/ directory with three harnesses.
-          # At M0 these don't exist yet; this job is a no-op until then.
+          # P0-10 / PLAN-V9 §5 M3 DoD: 3 fuzz harnesses in fuzz/,
+          # 5 min each. The nightly workflow
+          # (`.github/workflows/nightly-fuzz.yml`) is the canonical
+          # place for the nightly schedule; this PR-triggered job
+          # runs them as a smoke test.
           if [ -d fuzz ]; then
             cargo +nightly fuzz run fuzz_rlp_decode -- -max_total_time=300
             cargo +nightly fuzz run fuzz_signature_recover -- -max_total_time=300
             cargo +nightly fuzz run fuzz_keystore_json -- -max_total_time=300
           else
-            echo "fuzz/ directory not present (M0); skipping"
+            echo "fuzz/ directory not present; skipping (should not happen post-M3)"
+            exit 1
           fi

@@ -2,7 +2,7 @@
 //
 // Signing: EIP-2 low-S check, EIP-191 personal_sign, ecrecover roundtrip.
 //
-// V8 §5 M1 DoD:
+// PLAN-V9 §5 M1 DoD:
 //   - EIP-2 low-S signatures
 //   - `personal_sign` with `\x19Ethereum Signed Message:\n` prefix
 //   - Ecrecover roundtrip integration test

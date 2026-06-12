@@ -2,7 +2,7 @@
 //
 // Keccak-256 wrapper around the `tiny-keccak` crate.
 //
-// Per V8 §5 M1 DoD:
+// Per PLAN-V9 §5 M1 DoD:
 //   "Keccak-256 via `tiny-keccak` `Keccak` type (not `Sha3`); `sha3` crate forbidden"
 //
 // Why not the `sha3` crate: it is dual-licensed MIT/Apache-2.0 and would

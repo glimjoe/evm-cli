@@ -82,7 +82,7 @@ The migration is mechanical (≤ 5 LOC change + 1 dep removal). This ADR's "Opti
 
 ### Consequences
 
-* **Good**: simple, satisfies §7 self-audit, ~5 lines of code (or one `human-panic::setup!()` call).
+* **Good**: simple, satisfies §7 self-audit, ~5 lines of code (or one `human-panic::setup_panic!()` call — note the `_panic` suffix per V9 §18 correction item #4; `human-panic` 2.x's macro is `setup_panic!()`, not `setup!()`).
 * **Good**: works in `dev` and `release` profiles identically.
 * **Bad**: `human-panic` adds one dependency. If the maintainers prefer zero new deps, option B is the fallback.
 * **Bad**: friendly error message makes diagnosis harder for the maintainer when a user reports a bug. Mitigation: include a request for the user to re-run with `EVMC_DEBUG=1` if they want a backtrace (this env var is checked in `main()` and explicitly opts in to default behavior).
