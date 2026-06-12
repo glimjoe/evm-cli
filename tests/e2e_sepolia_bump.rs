@@ -82,7 +82,7 @@ async fn sepolia_bump_fee_rescue() {
     //    pending because the fee is below the mempool floor.
     let value = Amount::from_wei(alloy_primitives::U256::from(1u64));
     let signed1 = chain
-        .build_eth_transfer(&signer, sender, value, None, None)
+        .build_eth_transfer(&signer, sender, value, vec![], None, None)
         .await
         .expect("build initial low-fee tx");
     eprintln!("E2E: initial tx hash = {}", signed1.hash);

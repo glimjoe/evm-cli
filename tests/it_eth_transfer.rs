@@ -95,7 +95,7 @@ async fn eth_transfer_end_to_end() {
     // 5. Build the EIP-1559 ETH transfer (0.001 ETH = 1e15 wei).
     let value = Amount::try_from_decimal_str("0.001", 18).expect("parse 0.001 ETH");
     let signed = chain
-        .build_eth_transfer(&sender_signer, recipient_addr, value, None, None)
+        .build_eth_transfer(&sender_signer, recipient_addr, value, vec![], None, None)
         .await
         .expect("build_eth_transfer");
     eprintln!("signed tx hash: {}", signed.hash);

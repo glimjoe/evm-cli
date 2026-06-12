@@ -198,4 +198,28 @@ mod tests {
             assert_eq!(m.expose_secret(), v, "round-trip preserves phrase");
         }
     }
+
+    /// Display format for `WordCount` (covers both variants).
+    #[test]
+    fn word_count_display() {
+        assert_eq!(format!("{}", WordCount::Twelve), "12 words");
+        assert_eq!(format!("{}", WordCount::TwentyFour), "24 words");
+    }
+
+    /// `WordCount::as_usize` round-trips with the Display string.
+    #[test]
+    fn word_count_as_usize() {
+        assert_eq!(WordCount::Twelve.as_usize(), 12);
+        assert_eq!(WordCount::TwentyFour.as_usize(), 24);
+    }
+
+    /// `display_and_clear` runs to completion without panicking; we
+    /// don't assert on the stderr content (it's ANSI-clear-screen
+    /// dependent) — just that the function doesn't blow up.
+    #[test]
+    fn display_and_clear_runs() {
+        let phrase = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about";
+        let secret = validate(phrase).expect("validate");
+        display_and_clear(&secret);
+    }
 }

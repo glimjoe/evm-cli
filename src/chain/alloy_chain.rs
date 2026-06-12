@@ -142,6 +142,7 @@ impl Chain for AlloyChain {
         signer: &PrivateKeySigner,
         to: Address,
         value: Amount,
+        data: Vec<u8>,
         max_fee_per_gas: Option<Amount>,
         max_priority_fee_per_gas: Option<Amount>,
     ) -> Result<SignedEthTransfer, ChainError> {
@@ -189,7 +190,7 @@ impl Chain for AlloyChain {
             to: TxKind::Call(to.into_alloy()),
             value: value.into_wei(),
             access_list: Default::default(),
-            input: Default::default(),
+            input: alloy_primitives::Bytes::from(data),
         };
 
         // 5. Compute the EIP-155 signing hash.

@@ -236,4 +236,44 @@ mod tests {
         let recovered = ecrecover(&sig, &msg).expect("recover");
         assert_eq!(recovered, signer.address());
     }
+
+    /// `hash_message_raw` is a passthrough; verify it matches the
+    /// Keccak256 of the input.
+    #[test]
+    fn hash_message_raw_matches_keccak() {
+        let msg = b"hello world";
+        let h1 = hash_message_raw(msg);
+        let h2: B256 = keccak256(msg).into();
+        assert_eq!(h1, h2);
+    }
+
+    /// `Display` and `Debug` for `SignError` are exercised (via
+    /// their use in production error paths; we don't assert on the
+    /// exact string but ensure they don't panic).
+    #[test]
+    fn sign_error_display_does_not_panic() {
+        let e = SignError::HighS;
+        let _ = format!("{e}");
+        let _ = format!("{:?}", e);
+        let e = SignError::Alloy("test".to_string());
+        let _ = format!("{e}");
+        let _ = format!("{:?}", e);
+        let e = SignError::Recover("test".to_string());
+        let _ = format!("{e}");
+        let _ = format!("{:?}", e);
+    }
+
+    /// `is_low_s` rejects s=0 (degenerate signature) — the
+    /// function short-circuits before comparing to the half-order.
+    #[test]
+    fn is_low_s_rejects_zero() {
+        use alloy_primitives::{Signature, U256};
+        // r is arbitrary; s=0 is what we're testing. y_parity=true
+        // (i.e. v=27). The function inspects only s, so r is
+        // irrelevant.
+        let r = U256::from(0xab);
+        let s = U256::ZERO;
+        let sig = Signature::new(r, s, true);
+        assert!(!is_low_s(&sig), "s=0 should be rejected");
+    }
 }

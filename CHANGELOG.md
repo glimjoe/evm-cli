@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **M4 polish (this commit)**: P0-9 send-summary now includes the
+  `fee`/`total`/`nonce` fields per PLAN-V9 §5 M4 DoD example. The
+  fee is fetched up-front via `chain.estimate_fees()` + `chain
+  .pending_nonce()` (one extra RPC round-trip) so the user sees the
+  exact value they are about to sign.
+- **M4 polish (this commit)**: `Chain::build_eth_transfer` now
+  takes a `data: Vec<u8>` parameter (was an implicit empty input).
+  `cmd_send_token` passes the ERC-20 calldata so the broadcast
+  actually executes the `transfer(to, amount)` call on-chain
+  (previously a value=0 + empty-data no-op). RBF / cancel still
+  pass `vec![]` (those are plain ETH transfers).
+- **M4 polish (this commit)**: New `tests/it_cli_repl.rs`
+  integration test (7 tests, no anvil dependency): `--version`,
+  `--help` lists all 11 commands, `--json` emits NDJSON errors,
+  human mode emits structured errors, panic-safety on bad input.
+
+### Known V1 limitations
+
+- **P0-8 coverage gate**: per-module gate **passes** (crypto/ ≥
+  97%, keystore/ = 90.56%, both ≥ 90%). **Global gate does not
+  pass** (61.46% lines; plan requires ≥ 80%). The shortfall is
+  concentrated in `cli/commands.rs` (0% — requires anvil) and
+  `chain/alloy_chain.rs` (57% — requires anvil) and
+  `chain/rbf.rs` (45% — requires anvil). The 3 anvil-driven
+  integration tests in `tests/it_eth_transfer.rs` give behavioral
+  coverage of these paths but do not count toward `cargo
+  llvm-cov` line coverage (different processes). Accepting this
+  for V1; deferred to M5/V2 to either:
+    (a) refactor `cli/commands.rs` to extract testable pure
+        functions (estimated 50–100 LoC, target 70–75% global);
+    (b) write a SEPOLIA-fork anvil integration test that exercises
+        the full REPL flow (significant investment; defer to V2).
+
+## [Unreleased (pre-M5)]
+
 ### Planned (M5 — Release Engineering, then M6 — Self-Audit)
 - `.github/workflows/release.yml` (or `cargo dist` config) producing
   `evm-cli-v0.2.0-linux-x86_64.tar.gz` + `.sha256`

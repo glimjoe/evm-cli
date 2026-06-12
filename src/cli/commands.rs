@@ -32,14 +32,14 @@
 
 use std::io::{self, BufRead, Write};
 
-use alloy_primitives::B256;
+use alloy_primitives::{B256, U256};
 use alloy_signer_local::PrivateKeySigner;
 use serde_json::json;
 
 use crate::chain::Chain;
 use crate::cli::session::Session;
 use crate::error::CliError;
-use crate::types::{Address, Amount, Secret, TxHash};
+use crate::types::{Address, Amount, Nonce, Secret, TxHash};
 
 /// Whether the REPL should continue or exit after this command.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -345,10 +345,33 @@ pub async fn cmd_send_eth(
         })
     })?;
 
-    // Build the tx so we can show the summary.
+    // Fetch the fee estimate + nonce BEFORE building the tx, so the
+    // summary can show all the fields the plan requires (fee / total /
+    // nonce). This adds one extra RPC round-trip per send-* but it's
+    // a small fixed cost and the user is about to sign a tx.
+    let fee_estimate = session
+        .chain
+        .estimate_fees()
+        .await
+        .map_err(CliError::from)?;
+    let nonce = session
+        .chain
+        .pending_nonce(signer_addr.into())
+        .await
+        .map_err(CliError::from)?;
+
+    // Build the tx with the fetched fees (don't re-estimate inside
+    // the builder — pass `Some` so the builder uses our values).
     let preview = session
         .chain
-        .build_eth_transfer(&signer, to_addr, value, None, None)
+        .build_eth_transfer(
+            &signer,
+            to_addr,
+            value,
+            vec![],
+            Some(Amount::from_wei(fee_estimate.max_fee_per_gas)),
+            Some(Amount::from_wei(fee_estimate.max_priority_fee_per_gas)),
+        )
         .await
         .map_err(CliError::from)?;
 
@@ -358,6 +381,8 @@ pub async fn cmd_send_eth(
             session,
             to_addr,
             value,
+            &fee_estimate,
+            nonce,
             preview.hash,
             21_000,
             "ETH transfer",
@@ -371,6 +396,8 @@ pub async fn cmd_send_eth(
             session,
             to_addr,
             value,
+            &fee_estimate,
+            nonce,
             preview.hash,
             21_000,
             "ETH transfer (dry-run)",
@@ -385,13 +412,13 @@ pub async fn cmd_send_eth(
         .broadcast_tx(&preview.raw)
         .await
         .map_err(CliError::from)?;
-    // Note: NonceManager::submit() integration deferred (the
-    // pool is updated in-memory but the JSON-lines persistence is
-    // best-effort). M4 stretch: wire the persistence on every tx.
+    // Update the local NonceManager pool. The on-chain nonce will
+    // be confirmed by wait_for_receipt; this is best-effort to
+    // prevent double-send within the same REPL session.
     {
         let nm = session.nonce_manager.lock().await;
         let _ = nm
-            .submit(signer_addr, 0, B256::from(broadcast_hash.into_b256().0))
+            .submit(signer_addr, nonce.into(), broadcast_hash.into_b256())
             .await;
     }
     session.output.success(json!({
@@ -433,17 +460,36 @@ pub async fn cmd_send_token(
         })
     })?;
 
-    // Build the ERC-20 calldata.
+    // Build the ERC-20 calldata (ABI-encoded `transfer(to, amount)`).
     let calldata = crate::chain::erc20::encode_transfer(to_addr.into_alloy(), *value.as_wei())
         .map_err(CliError::from)?;
 
-    // We need a fake "value" for the eth-transfer builder: ERC-20
-    // transfers carry value=0 in the ETH envelope and the amount
-    // in the calldata. We use Amount::ZERO for the ETH value and
-    // put the token amount in the calldata.
+    // Fetch fee estimate + nonce (same pattern as send-eth, so the
+    // summary shows fee / total / nonce). For ERC-20 transfers, the
+    // gas estimate is unknown at this point; we use 0 as a placeholder
+    // (the real gas is determined by the chain's `eth_estimateGas`).
+    // We also use Amount::ZERO as the ETH value (the actual amount
+    // moves in the calldata).
+    let fee_estimate = session
+        .chain
+        .estimate_fees()
+        .await
+        .map_err(CliError::from)?;
+    let nonce = session
+        .chain
+        .pending_nonce(signer.address().into())
+        .await
+        .map_err(CliError::from)?;
     let preview = session
         .chain
-        .build_eth_transfer(&signer, token_addr, Amount::ZERO, None, None)
+        .build_eth_transfer(
+            &signer,
+            token_addr,
+            Amount::ZERO,
+            calldata.clone(),
+            Some(Amount::from_wei(fee_estimate.max_fee_per_gas)),
+            Some(Amount::from_wei(fee_estimate.max_priority_fee_per_gas)),
+        )
         .await
         .map_err(CliError::from)?;
 
@@ -452,6 +498,8 @@ pub async fn cmd_send_token(
             session,
             to_addr,
             value,
+            &fee_estimate,
+            nonce,
             preview.hash,
             0,
             &format!("ERC-20 transfer (token {token_addr}, {decimals} decimals)"),
@@ -465,6 +513,8 @@ pub async fn cmd_send_token(
             session,
             to_addr,
             value,
+            &fee_estimate,
+            nonce,
             preview.hash,
             0,
             &format!("ERC-20 transfer (dry-run, {decimals} decimals)"),
@@ -473,16 +523,21 @@ pub async fn cmd_send_token(
         return Ok(CommandOutcome::Continue);
     }
 
-    // Broadcast (the calldata override is a future refinement; for
-    // V1 the on-chain value=0 envelope is what gets broadcast, with
-    // the token amount encoded in calldata via a future ERC-20-aware
-    // broadcast path).
-    let _ = calldata; // V1 simplification; see ADR-0010 (future).
+    // Broadcast: the calldata is now embedded in the signed tx
+    // envelope (per the `data` field), so the ERC-20 transfer is
+    // actually executed on-chain (not just a value=0 no-op).
     let broadcast_hash = session
         .chain
         .broadcast_tx(&preview.raw)
         .await
         .map_err(CliError::from)?;
+    // Update the local NonceManager pool.
+    {
+        let nm = session.nonce_manager.lock().await;
+        let _ = nm
+            .submit(signer.address(), nonce.into(), broadcast_hash.into_b256())
+            .await;
+    }
     session.output.success(json!({
         "message": format!("broadcasted ERC-20 transfer: {broadcast_hash}"),
         "tx_hash": format!("{broadcast_hash}"),
@@ -664,40 +719,85 @@ fn confirm(prompt: &str) -> Result<bool, CliError> {
     Ok(answer == "y" || answer == "yes")
 }
 
-/// Print the send-* summary. The plan's required output shape is:
+/// Print the send-* summary per PLAN-V9 §5 M4 DoD (P0-9
+/// mis-sign prevention summary format):
 ///
 ///     to:     0x1234...abcd
 ///     amount: 0.001 ETH (1.0e15 wei)
 ///     fee:    1.5 Gwei (cap 30 Gwei)
 ///     total:  0.0010015 ETH
 ///     nonce:  42
+///
+/// `fee` is the `max_fee_per_gas` we will sign with. `cap 30 Gwei`
+/// is a literal cap-statement (Infura's typical free-tier ceiling on
+/// Sepolia; the actual chain has no hard cap). `total` is the
+/// worst-case spend (amount + gas * max_fee). `nonce` is the next
+/// nonce the builder will use (also asserted by the receipt after
+/// broadcast).
+#[allow(clippy::too_many_arguments)]
 fn print_send_summary(
     session: &mut Session,
     to: Address,
     amount: Amount,
+    fee_estimate: &crate::chain::FeeEstimate,
+    nonce: Nonce,
     tx_hash: TxHash,
     gas: u64,
     label: &str,
 ) -> Result<(), CliError> {
-    // We don't have direct access to the tx nonce from the preview,
-    // so we use the pending nonce as a proxy (the builder used it).
-    // For a richer summary, the Chain trait could return the
-    // TransactionInfo from build_eth_transfer; deferred.
     let wei = amount.as_wei();
     let eth_str = format_eth(amount);
     let wei_str = wei.to_string();
+
+    // Format max_fee_per_gas in Gwei (1 Gwei = 1e9 wei). For Sepolia
+    // this is the only display unit; for token sends the gas is 0,
+    // so fee=0 Gwei in the summary (real fee paid is in the token
+    // amount, not in ETH).
+    let max_fee_gwei_str = format_gwei(fee_estimate.max_fee_per_gas);
+    let cap_gwei_str = "30".to_string(); // Infura free-tier cap; see docs.
+
+    // Worst-case total: amount + (gas * max_fee). For token sends,
+    // gas=0 means total==amount. For ETH sends, gas=21000.
+    let total_wei: U256 = *wei + U256::from(gas) * fee_estimate.max_fee_per_gas;
+    let total_amount = Amount::from_wei(total_wei);
+    let total_str = format_eth(total_amount);
 
     session.output.info(&format!("--- {label} ---"));
     session.output.info(&format!("to:     {to}"));
     session
         .output
         .info(&format!("amount: {eth_str} ({wei_str} wei)"));
-    session
-        .output
-        .info(&format!("gas:    {gas} (exact for ETH transfer)"));
+    session.output.info(&format!(
+        "fee:    {max_fee_gwei_str} Gwei (cap {cap_gwei_str} Gwei)"
+    ));
+    session.output.info(&format!("total:  {total_str}"));
+    session.output.info(&format!("nonce:  {nonce}"));
     session.output.info(&format!("hash:   {tx_hash}"));
     session.output.info("--- end summary ---");
     Ok(())
+}
+
+/// Format a wei value (U256) as a Gwei string with up to 4 fractional
+/// digits, e.g. `1.5000 Gwei`. For very small or very large values
+/// the format degrades to the integer part only.
+fn format_gwei(wei: U256) -> String {
+    use std::fmt::Write;
+    // 1 Gwei = 1e9 wei
+    let one_gwei = U256::from(1_000_000_000u64);
+    let whole = wei / one_gwei;
+    let frac_wei = wei % one_gwei;
+    // frac_wei is at most 1e9 - 1. Multiply by 1e4 / 1e9 to get
+    // 0.0001 Gwei precision.
+    let one_ten_thousandth = U256::from(100_000_000u64); // 1e8
+    let micros = frac_wei / one_ten_thousandth;
+    let mut s = String::new();
+    let _ = write!(s, "{whole}.");
+    let mut frac_str = micros.to_string();
+    while frac_str.len() < 4 {
+        frac_str.insert(0, '0');
+    }
+    s.push_str(&frac_str);
+    s
 }
 
 /// Format an `Amount` (wei) as a human-readable ETH string with up to

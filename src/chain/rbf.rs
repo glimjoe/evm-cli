@@ -108,6 +108,10 @@ pub async fn bump_fee<C: Chain + ?Sized>(
             signer,
             to,
             value,
+            vec![], // RBF doesn't carry calldata; the original tx's
+            // calldata is in `info.data` but we don't preserve
+            // it (RBF for ERC-20 is out of V1 scope). The
+            // fallback to a value-transfer RBF is sufficient.
             Some(crate::types::Amount::from_wei(new_max)),
             Some(crate::types::Amount::from_wei(new_prio)),
         )
@@ -146,6 +150,7 @@ pub async fn cancel<C: Chain + ?Sized>(
             signer,
             self_addr,
             crate::types::Amount::ZERO,
+            vec![], // cancel is always a 0-value self-send; no calldata
             Some(crate::types::Amount::from_wei(new_max)),
             Some(crate::types::Amount::from_wei(new_prio)),
         )

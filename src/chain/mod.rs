@@ -154,14 +154,19 @@ pub trait Chain: Send + Sync {
         &self,
     ) -> impl std::future::Future<Output = Result<FeeEstimate, ChainError>> + Send;
 
-    /// Build + sign an ETH transfer transaction. Returns the raw
+    /// Build + sign an EIP-1559 transaction. Returns the raw
     /// RLP-encoded signed bytes (ready for `broadcast_tx`) and the
     /// resulting transaction hash.
+    ///
+    /// For plain ETH transfers, pass `data: vec![]` and a non-zero
+    /// `value`. For ERC-20 (or any contract) calls, pass
+    /// `value: Amount::ZERO` and the calldata in `data`.
     fn build_eth_transfer(
         &self,
         signer: &alloy_signer_local::PrivateKeySigner,
         to: Address,
         value: Amount,
+        data: Vec<u8>,
         max_fee_per_gas: Option<Amount>,
         max_priority_fee_per_gas: Option<Amount>,
     ) -> impl std::future::Future<Output = Result<SignedEthTransfer, ChainError>> + Send;

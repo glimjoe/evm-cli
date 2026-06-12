@@ -622,4 +622,24 @@ mod tests {
         let signer2 = store.load("main", &pw()).expect("load");
         assert_eq!(signer2.address(), addr1);
     }
+
+    /// `From<std::io::Error>` produces an `Io` variant (EVMK-011).
+    #[test]
+    fn from_io_error_is_io_variant() {
+        use crate::error::CodeSource;
+        let io = std::io::Error::new(std::io::ErrorKind::NotFound, "x");
+        let k: KeystoreError = io.into();
+        assert!(matches!(k, KeystoreError::Io(_)));
+        assert_eq!(k.code(), "EVMK-011");
+    }
+
+    /// `From<serde_json::Error>` produces a `FileCorrupted` (EVMK-002).
+    #[test]
+    fn from_serde_error_is_file_corrupted() {
+        use crate::error::CodeSource;
+        let sj = serde_json::from_str::<serde_json::Value>("not json").unwrap_err();
+        let k: KeystoreError = sj.into();
+        assert!(matches!(k, KeystoreError::FileCorrupted));
+        assert_eq!(k.code(), "EVMK-002");
+    }
 }
