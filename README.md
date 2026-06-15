@@ -61,6 +61,30 @@ Per [ADR-0009](./docs/adr/0009-eth-keystore-deviation.md):
 Both limitations are accepted for V1 and recorded in ADR-0009 with
 the rationale and V2 follow-up.
 
+### Platform requirements
+
+Pre-built binaries are dynamically linked against **glibc 2.38+** (the
+CI builds on `ubuntu-latest`, currently Ubuntu 24.04). Verified to
+run on:
+
+- Ubuntu 24.04 LTS and later
+- Debian 13 (trixie) and later
+- Fedora 39+ / RHEL 10+
+- Most rolling-release distros (Arch, openSUSE Tumbleweed)
+
+Older LTS releases (Ubuntu 22.04, Debian 12) need a source build:
+`cargo install --git https://github.com/glimjoe/evm-cli` (uses the
+host's native glibc).
+
+## Releases
+
+See the [GitHub releases page](https://github.com/glimjoe/evm-cli/releases)
+for the full list. Each release is signed by SHA256 (`.sha256` sidecar)
+and the workflow is reproducible from
+[`.github/workflows/release.yml`](./.github/workflows/release.yml).
+
+Latest: **v0.2.1** (2026-06-12) — see [CHANGELOG](./CHANGELOG.md#021--2026-06-12).
+
 ## Documentation
 
 - [PLAN.md](./PLAN.md) — implementation plan

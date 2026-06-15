@@ -26,7 +26,7 @@ jobs:
     name: Fuzz (nightly, 5 min per harness)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Install Rust toolchain (pinned via rust-toolchain.toml)
         run: rustup show
