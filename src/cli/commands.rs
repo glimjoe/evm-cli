@@ -32,11 +32,12 @@
 
 use std::io::{self, BufRead, Write};
 
-use alloy_primitives::{B256, U256};
+use alloy_primitives::B256;
 use alloy_signer_local::PrivateKeySigner;
 use serde_json::json;
 
 use crate::chain::Chain;
+use crate::cli::pure;
 use crate::cli::session::Session;
 use crate::error::CliError;
 use crate::types::{Address, Amount, Nonce, Secret, TxHash};
@@ -229,7 +230,7 @@ pub async fn cmd_balance(
     let bal = session.chain.balance(addr).await.map_err(CliError::from)?;
     let wei = bal.as_wei();
     // Human-readable ETH with 6 decimal places (e.g. "0.001000 ETH").
-    let eth_display = format_eth(bal);
+    let eth_display = pure::format_eth(bal);
 
     session.output.success(json!({
         "message": format!("balance of {addr}: {eth_display}"),
@@ -426,7 +427,7 @@ pub async fn cmd_send_eth(
         "tx_hash": format!("{broadcast_hash}"),
         "to": format!("{to_addr}"),
         "amount_wei": value.as_wei().to_string(),
-        "amount_eth": format_eth(value),
+        "amount_eth": pure::format_eth(value),
     }));
     Ok(CommandOutcome::Continue)
 }
@@ -604,8 +605,9 @@ async fn cmd_rbf(
     is_bump: bool,
     dry_run: bool,
 ) -> Result<CommandOutcome, CliError> {
-    // Parse the hash.
-    let hash_bytes: [u8; 32] = parse_tx_hash(hash_str)?;
+    // Parse the hash (pure function in `cli::pure`).
+    let hash_bytes: [u8; 32] = pure::parse_tx_hash(hash_str)
+        .map_err(|e| CliError::from(crate::chain::ChainError::Internal(e)))?;
     let hash = TxHash::from_b256(B256::from(hash_bytes));
 
     // Look up the original tx to get the "to" / "value" (cancel
@@ -673,24 +675,6 @@ fn require_unlocked_signer(session: &Session) -> Result<PrivateKeySigner, CliErr
     Ok(session.unlocked_signer.clone().expect("can_sign invariant"))
 }
 
-fn parse_tx_hash(s: &str) -> Result<[u8; 32], CliError> {
-    let s = s.strip_prefix("0x").unwrap_or(s);
-    let bytes = hex::decode(s).map_err(|e| {
-        CliError::from(crate::chain::ChainError::Internal(format!(
-            "invalid tx hash: {e}"
-        )))
-    })?;
-    if bytes.len() != 32 {
-        return Err(CliError::from(crate::chain::ChainError::Internal(format!(
-            "tx hash must be 32 bytes, got {}",
-            bytes.len()
-        ))));
-    }
-    let mut out = [0u8; 32];
-    out.copy_from_slice(&bytes);
-    Ok(out)
-}
-
 fn prompt_password(prompt: &str) -> Result<Secret<String>, CliError> {
     eprint!("{prompt}");
     let _ = io::stderr().flush();
@@ -715,8 +699,8 @@ fn confirm(prompt: &str) -> Result<bool, CliError> {
     handle
         .read_line(&mut line)
         .map_err(|e| CliError::from(crate::keystore::KeystoreError::Io(e.to_string())))?;
-    let answer = line.trim().to_lowercase();
-    Ok(answer == "y" || answer == "yes")
+    // The yes/no decision is pure (lives in `cli::pure::is_yes_answer`).
+    Ok(pure::is_yes_answer(&line))
 }
 
 /// Print the send-* summary per PLAN-V9 §5 M4 DoD (P0-9
@@ -747,88 +731,16 @@ fn print_send_summary(
     gas: u64,
     label: &str,
 ) -> Result<(), CliError> {
-    let wei = amount.as_wei();
-    let eth_str = format_eth(amount);
-    let wei_str = wei.to_string();
-
-    // Format max_fee_per_gas in Gwei (1 Gwei = 1e9 wei). For Sepolia
-    // this is the only display unit; for token sends the gas is 0,
-    // so fee=0 Gwei in the summary (real fee paid is in the token
-    // amount, not in ETH).
-    let max_fee_gwei_str = format_gwei(fee_estimate.max_fee_per_gas);
-    let cap_gwei_str = "30".to_string(); // Infura free-tier cap; see docs.
-
-    // Worst-case total: amount + (gas * max_fee). For token sends,
-    // gas=0 means total==amount. For ETH sends, gas=21000.
-    let total_wei: U256 = *wei + U256::from(gas) * fee_estimate.max_fee_per_gas;
-    let total_amount = Amount::from_wei(total_wei);
-    let total_str = format_eth(total_amount);
-
-    session.output.info(&format!("--- {label} ---"));
-    session.output.info(&format!("to:     {to}"));
-    session
-        .output
-        .info(&format!("amount: {eth_str} ({wei_str} wei)"));
-    session.output.info(&format!(
-        "fee:    {max_fee_gwei_str} Gwei (cap {cap_gwei_str} Gwei)"
-    ));
-    session.output.info(&format!("total:  {total_str}"));
-    session.output.info(&format!("nonce:  {nonce}"));
-    session.output.info(&format!("hash:   {tx_hash}"));
-    session.output.info("--- end summary ---");
+    // The summary block is pure (no I/O, no global state). It lives
+    // in `cli::pure` so it can be unit-tested without anvil/keystore.
+    // This orchestrator just hands the rendered string to the
+    // session's output formatter.
+    let block = pure::format_send_summary(to, amount, fee_estimate, nonce, tx_hash, gas, label);
+    session.output.info(&block);
     Ok(())
 }
 
-/// Format a wei value (U256) as a Gwei string with up to 4 fractional
-/// digits, e.g. `1.5000 Gwei`. For very small or very large values
-/// the format degrades to the integer part only.
-fn format_gwei(wei: U256) -> String {
-    use std::fmt::Write;
-    // 1 Gwei = 1e9 wei
-    let one_gwei = U256::from(1_000_000_000u64);
-    let whole = wei / one_gwei;
-    let frac_wei = wei % one_gwei;
-    // frac_wei is at most 1e9 - 1. Multiply by 1e4 / 1e9 to get
-    // 0.0001 Gwei precision.
-    let one_ten_thousandth = U256::from(100_000_000u64); // 1e8
-    let micros = frac_wei / one_ten_thousandth;
-    let mut s = String::new();
-    let _ = write!(s, "{whole}.");
-    let mut frac_str = micros.to_string();
-    while frac_str.len() < 4 {
-        frac_str.insert(0, '0');
-    }
-    s.push_str(&frac_str);
-    s
-}
-
-/// Format an `Amount` (wei) as a human-readable ETH string with up to
-/// 6 fractional digits, e.g. `1.000000 ETH`.
-fn format_eth(amount: Amount) -> String {
-    use std::fmt::Write;
-    let wei = amount.as_wei();
-    // wei / 10^18. We do long division with 6 fractional digits.
-    let one_eth: u128 = 1_000_000_000_000_000_000;
-    // Convert to U512 (avoids overflow on 1e18 * 1e6 = 1e24).
-    let wei_u512: alloy_primitives::U512 = alloy_primitives::U512::from(*wei);
-    let one_eth_u512 = alloy_primitives::U512::from(one_eth);
-    let one_micro = alloy_primitives::U512::from(1_000_000_000_000u64); // 1e12
-
-    let whole = wei_u512 / one_eth_u512;
-    let frac_wei = wei_u512 % one_eth_u512;
-    // frac_wei is at most 1e18 - 1. Multiply by 1e6 / 1e18 to get
-    // micro-ETH. We use integer division; remainder is discarded
-    // (caller is OK with 6-digit precision).
-    let micros = frac_wei / one_micro;
-
-    let mut s = String::new();
-    let _ = write!(s, "{whole}.");
-    // Pad micros to 6 digits.
-    let mut frac_str = micros.to_string();
-    while frac_str.len() < 6 {
-        frac_str.insert(0, '0');
-    }
-    s.push_str(&frac_str);
-    s.push_str(" ETH");
-    s
-}
+// `format_eth`, `format_gwei`, the body of `print_send_summary`,
+// `parse_tx_hash`, and the yes/no parsing inside `confirm` have
+// moved to `crate::cli::pure` (M7). See `src/cli/pure.rs` for the
+// pure implementations and their unit tests.

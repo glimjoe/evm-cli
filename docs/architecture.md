@@ -184,10 +184,10 @@ Per PLAN-V9 §9 (out of scope, V2 candidates):
 
 ```
 dist/
-├── evm-cli-v0.2.1-linux-x86_64.tar.gz     # binary only (LICENSE / README kept in-repo)
-├── evm-cli-v0.2.1-linux-x86_64.sha256     # sha256sum output
-├── evm-cli-v0.2.1-linux-aarch64.tar.gz
-└── evm-cli-v0.2.1-linux-aarch64.sha256
+├── evm-cli-v0.3.0-linux-x86_64.tar.gz     # binary only (LICENSE / README kept in-repo)
+├── evm-cli-v0.3.0-linux-x86_64.sha256     # sha256sum output
+├── evm-cli-v0.3.0-linux-aarch64.tar.gz
+└── evm-cli-v0.3.0-linux-aarch64.sha256
 ```
 
 Each `.tar.gz` is `tar -C target/<triple>/release -czf … evm-cli`. SHA256 is computed by `sha256sum` and stored as a sidecar (standard `sha256sum -c` format, one line: `<hash>  <filename>`).

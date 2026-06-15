@@ -31,6 +31,7 @@ pub mod commands;
 pub mod config;
 pub mod history;
 pub mod output;
+pub mod pure;
 pub mod session;
 
 #[derive(Debug, Parser)]

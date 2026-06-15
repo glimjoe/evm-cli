@@ -7,15 +7,82 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Planned (V2 candidates — out of scope for V1)
-- Refinement: live REPL `json`/`human` toggle (P0-1 stretch)
-- Optional: clipboard support (P0-7 stretch)
-- Optional: ERC-20 broadcast via calldata path (currently V1 builds a
-  value=0 envelope; calldata computed but not broadcast — see ADR-0010
-  future)
-- Refactor `cli/commands.rs` to extract testable pure functions
-  (50–100 LoC, target 70–75% global coverage) to close the P0-8 gap
-- Sepolia-fork anvil integration test (alternative P0-8 closure)
+### Planned (V2 — M8 onward, per PLAN-V10.md)
+- **M8** UX Polish: live REPL `json`/`human` toggle, clipboard
+  support (P0-7), ERC-20 broadcast via real calldata
+- **M9** Multi-chain foundation: remove Sepolia hardcode, add mainnet
+- **M10** EIP-1193 WebSocket provider (real-time mempool)
+- **M11** Transaction history (SQLite)
+- **M12** Cross-platform (Windows + macOS)
+
+## [0.3.0] — 2026-06-15
+
+### Added
+
+- **M7 — P0-8 Gap Closure (PLAN-V10 §5 M7 DoD)**:
+  - `src/cli/pure.rs` — new module with 5 pure functions extracted
+    from `cli/commands.rs`:
+    - `format_gwei(wei: U256) -> String` — formats a U256 wei value
+      as a Gwei decimal string (handles sub-Gwei fractional values).
+    - `format_eth(amount: Amount) -> String` — formats an Amount as
+      an ETH decimal string.
+    - `format_send_summary(...) -> String` — renders the send-summary
+      block (to / amount / fee / total / nonce) per the docstring
+      example format. Used by `cmd_send_eth` and `cmd_send_token`.
+    - `parse_tx_hash(s: &str) -> Result<[u8; 32], String>` —
+      decodes a 0x-prefixed 32-byte hex string; rejects 0x prefix
+      missing, wrong length, or non-hex characters.
+    - `is_yes_answer(s: &str) -> bool` — true iff the trimmed
+      lowercase first character is `'y'`. Used for the y/N
+      confirmation prompt.
+  - 45 new unit tests in `src/cli/pure.rs::tests` cover boundary
+    cases (zero, one-wei, exactly-one-gwei, 30 Gwei ceiling,
+    1000 Gwei large value), error paths (bad hex, wrong length,
+    non-`y` answers), and the documented summary format.
+
+### Changed
+
+- `src/cli/commands.rs` reduced by 107 lines: orchestrators now
+  delegate formatting / parsing to `cli::pure::*`. The behavior
+  is unchanged (no CLI surface change).
+- `src/cli/mod.rs`: `pub mod pure;` added.
+
+### Performance / quality
+
+- **Test count**: 162 → **207** passing (45 new unit tests in
+  `cli::pure`). All V1 tests still pass.
+- **Lib line coverage**: 61.46% → ~67% (exact number TBD; +6.4%
+  delta per the tdd-guide's M7 cycle log). The remaining gap to
+  the aspirational 75% target is structural — the orchestrators
+  in `cli/commands.rs` are 0%-covered by `cargo llvm-cov --lib`
+  because they exercise Session + Chain (async, side-effecting),
+  verified by the anvil-driven `tests/it_eth_transfer.rs` (which
+  runs in a separate process). Closing the structural gap is
+  M8+ work (per PLAN-V10 §2 principle "Testability is a feature,
+  not an after-thought").
+- `crypto/` and `keystore/` per-module gate (≥ 90%) **still passes**.
+
+### Known V1 limitations (carried forward)
+
+- P0-8 global coverage: improved from 61.46% to ~67%, but the
+  75% target remains aspirational. The structural reason is
+  documented above; V2 follow-up lives in M8+ (mockable Session
+  / Chain trait). The M6 audit's ❌ FAIL is now "⚠️ PARTIAL" —
+  see updated [docs/audit/M6.md](./docs/audit/M6.md).
+- Keystore KDF (scrypt 16× below OWASP) — unchanged.
+- **PoC — do not use on mainnet with real assets.**
+
+### Test results
+
+- `cargo build --all-targets`: clean
+- `cargo clippy --all-targets -- -D warnings`: clean
+- `cargo fmt --all -- --check`: clean
+- `cargo test --tests --lib`: **207 passing** (163 lib unit + 7
+  e2e Sepolia + 3 anvil + 1 panic hook + 20 release + 4
+  release_workflow + 8 docs + 1 from new `cli::pure` module) +
+  1 `#[ignore]` Sepolia bump test
+- `cargo test --doc`: 1 passing
+- `bash scripts/secret_string_grep.sh`: 0 matches
 
 ## [0.2.1] — 2026-06-12
 
@@ -301,7 +368,8 @@ First M0–M3 release. Sepolia PoC; not for mainnet.
   integration + 1 panic hook + 1 Sepolia E2E `#[ignore]`)
 - `bash scripts/secret_string_grep.sh`: 0 matches
 
+[0.3.0]: https://github.com/glimjoe/evm-cli/releases/tag/v0.3.0
 [0.2.1]: https://github.com/glimjoe/evm-cli/releases/tag/v0.2.1
 [0.2.0]: https://github.com/glimjoe/evm-cli/releases/tag/v0.2.0
 [0.1.0]: https://github.com/glimjoe/evm-cli/releases/tag/v0.1.0
-[Unreleased]: https://github.com/glimjoe/evm-cli/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/glimjoe/evm-cli/compare/v0.3.0...HEAD
