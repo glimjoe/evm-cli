@@ -87,7 +87,8 @@ Latest: **v0.2.1** (2026-06-12) — see [CHANGELOG](./CHANGELOG.md#021--2026-06-
 
 ## Documentation
 
-- [PLAN.md](./PLAN.md) — implementation plan
+- [PLAN.md](./PLAN.md) — V1 implementation plan
+- [PLAN-V10.md](./PLAN-V10.md) — V2 plan (M7–M12)
 - [docs/architecture.md](./docs/architecture.md) — ASCII architecture diagram
 - [docs/commands.md](./docs/commands.md) — command manual (all 11 commands)
 - [docs/troubleshooting.md](./docs/troubleshooting.md) — error-code lookup + common scenarios
